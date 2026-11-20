@@ -9,6 +9,7 @@ data/raw/
 data/processed/
 data/cache/
 data/runs/
+data/validation_etfs/
 *.parquet
 !snapshots/public/*.parquet
 *.duckdb

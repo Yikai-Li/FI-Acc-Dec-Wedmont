@@ -86,6 +86,7 @@ class ReplayRebalance(S.Frozen):
 
 
 class HistoricalReplaySpec(S.Frozen):
+    catalog_hash: str | None = None
     start: str = "2007-01"
     end: str | None = None                                  # None = latest month with every needed observation
     universe_mode: str = Field("fixed", pattern="^(fixed|expanding)$")

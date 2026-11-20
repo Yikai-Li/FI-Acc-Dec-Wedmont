@@ -20,6 +20,20 @@ def test_shortfall_cvar_handles_a_large_atom_at_zero():
     assert np.isclose(S.cvar(losses, 0.95), 0.2)
 
 
+def test_dated_studies_change_identity_when_the_data_change(monkeypatch):
+    from lifecycle.data import panel
+    from lifecycle.runs import executor
+    from lifecycle.studies.historical_replay import HistoricalReplaySpec
+    from lifecycle.studies.lifecycle_sim import LifecycleSimSpec
+
+    for kind, spec in (("historical_replay", HistoricalReplaySpec()), ("lifecycle_sim", LifecycleSimSpec())):
+        monkeypatch.setattr(panel, "catalog_hash", lambda: "first-vintage")
+        before = hashing.run_id_for(kind, executor.with_catalog(spec))
+        monkeypatch.setattr(panel, "catalog_hash", lambda: "second-vintage")
+        after = hashing.run_id_for(kind, executor.with_catalog(spec))
+        assert before != after
+
+
 def test_frontier_welfare_uses_the_selected_success_horizon():
     investor = S.StudyInvestor(horizon_years=40)
     spec = S.experiment_spec(S.StudyData(universe="core_long_history"),

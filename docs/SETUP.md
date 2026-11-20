@@ -5,6 +5,28 @@ public data, then optionally adds WRDS. Every step was run end to end on Linux (
 
 ## 0. Requirements
 
+### Windows PowerShell
+
+The validated Windows path uses Python 3.12 and the locked backend dependencies. From the repository root,
+run `python -m pip install uv`, then the following commands.
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m uv sync --project backend --extra dev --extra wrds --extra workers --frozen
+backend/.venv/Scripts/python.exe -m lifecycle.cli ingest --offline
+backend/.venv/Scripts/python.exe -m lifecycle.cli seed-v2
+Push-Location web
+npm.cmd ci
+npm.cmd run build
+Pop-Location
+```
+
+Start the API with `backend/.venv/Scripts/python.exe -m uvicorn lifecycle.api.main:app --host 127.0.0.1 --port 8000`.
+In another terminal, run `npm.cmd run start --prefix web`. The browser entry point is `http://localhost:3000`.
+
+The November 19 validation notebook lives at `research/followup_2026_11_19/fixed_income_validation.ipynb`.
+Its input files and `validation_manifest.json` record the run IDs, specifications and data hashes used.
+
 | Tool | Version | Notes |
 |---|---|---|
 | Python | 3.12 (exactly; `requires-python = ">=3.12,<3.13"`) | |
