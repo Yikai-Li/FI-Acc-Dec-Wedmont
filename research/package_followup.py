@@ -36,6 +36,14 @@ history = pd.read_csv(WRDS / "chronological_summary.csv")
 history = history[history.dataset.eq("wrds")]
 allocation = pd.read_csv(WRDS / "allocation_objective_summary.csv")
 a5 = allocation[allocation.withdrawal_rate.eq(.05)].iloc[0]
+rob = WRDS / "robustness"
+refit = pd.read_csv(rob / "history_refit_scores.csv")
+full_refit = refit[refit.policy.eq("full")].relative_resources_ce
+sensitivity = pd.read_csv(rob / "sensitivity_scores.csv")
+seed_results = sensitivity[sensitivity.generator.eq("bootstrap") & sensitivity.requested_block.isna()
+    & sensitivity.cost_half_spread_bps.eq(0) & sensitivity.bond_step.eq(.1) & sensitivity.gamma.eq(4)
+    & sensitivity.resource_floor.eq(1000) & sensitivity.weighting.eq("original_age_weights")
+    & sensitivity.flow_grid.eq("full") & sensitivity.policy.eq("full")].relative_resources_ce
 readme = f"""Fixed-income allocation: completed public and WRDS validation
 November 19, 2026 (America/New_York)
 
@@ -51,9 +59,15 @@ returns are replaced by CRSP. The latter reaches the 90% target first at {early.
 Using all CRSP core inputs over 2002-2024 gives {modern.loc['wrds','best_success']:.2%} at the best tested allocation. The result depends
 on the return source, sample and scenario generator; there is no supported universal bond minimum.
 
-The WRDS age-plus-flow rule gains {delta['delta']:.2%} resources CE over age-only on independent simulation paths
-(95% paired interval {delta['lo']:.2%} to {delta['hi']:.2%}). Historical fold means are positive in {(history.mean_relative_ce>0).sum()} of {len(history)} folds, with a
-range of {history.mean_relative_ce.min():.2%} to {history.mean_relative_ce.max():.2%}. Overlapping cohorts are not independent replications.
+The corrected three-asset WRDS age-plus-flow rule changes resources CE by {delta['delta']:.2%} versus age-only
+(95% paired interval {delta['lo']:.2%} to {delta['hi']:.2%}, including zero). Five simulation seeds give a range
+of {seed_results.min():.2%} to {seed_results.max():.2%}. The initial six-asset 0.61% estimate is superseded: unused Treasury
+assets changed the automatically fitted block length and prevented a matched comparison.
+
+Only {(full_refit>0).mean():.0%} of 100 training-history refits produce a positive CE difference. The central refit range is
+{full_refit.quantile(.025):.2%} to {full_refit.quantile(.975):.2%}; this is sensitivity conditional on a fixed future model, not a
+general confidence interval. Completed nonoverlapping tests contain nine five-year, four ten-year
+and two twenty-year periods per dataset. No consistent superiority of the conditional rule is established.
 At 5% withdrawals, utility and spending-success optimization select {a5.ce_selected_bonds:.0%} and {a5.success_selected_bonds:.0%} bonds respectively.
 The utility policy gains {a5.ce_gain:.2%} CE and changes success by {(a5.ce_policy_success-a5.success_policy_success)*100:.2f} percentage points on independent test paths.
 
@@ -61,9 +75,11 @@ These return-based experiments do not estimate household age effects on risk tol
 
 Completed checks
 
-12 matched-window frontier studies; 384 chronological age/flow cells; four verified extraction hashes;
+12 matched-window frontier studies; 384 earlier chronological age/flow cells; four verified extraction hashes;
 zero invalid restricted returns or duplicate month/series records; exact frontier and signed-flow
-reproduction; 111 backend tests. The earlier frontend checks remain 230 unit tests, 26 browser tests,
+reproduction; 111 backend tests and four analytical robustness tests. The extension adds 26 sensitivity
+configurations, 100 history refits and 900 policy/flow outcomes across 30 complete nonoverlapping periods
+(15 per dataset; horizons share months). The earlier frontend checks remain 230 unit tests, 26 browser tests,
 type-check and production build passed. The existing lint warning and six dependency advisories remain
 documented in the public report. The full 12-sleeve multi-asset study and Permanent Portfolio now run.
 

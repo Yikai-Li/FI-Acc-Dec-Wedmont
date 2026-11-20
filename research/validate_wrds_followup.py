@@ -47,7 +47,8 @@ def main():
         from lifecycle.studies.signed_flow import SignedFlowSpec
         from lifecycle.studies.permanent import PermanentSpec
         from lifecycle.studies.registry import spec_model
-        signed = SignedFlowSpec(data=S.StudyData(calibration_start="1953-01-01", calibration_end="2024-12-31"),
+        signed = SignedFlowSpec(data=S.StudyData(universe="core_long_history",
+            calibration_start="1953-01-01", calibration_end="2024-12-31"),
             scenario=S.StudyScenario(n_paths=5000, n_train_paths=4000, seed=20261119, k_regimes=1), n_boot=300)
         records["signed_flow"] = F.execute("signed_flow", signed, "WRDS age and signed cash flow")
         records["permanent"] = F.execute("permanent", PermanentSpec(data=S.StudyData(
@@ -58,7 +59,7 @@ def main():
             "calibration_start": "2007-05-01", "calibration_end": "2024-12-31"})})
         records["multi_asset"] = F.execute("multi_asset", multi, "WRDS full multi-asset baseline")
         F.save("wrds_extended_runs.json", records)
-        F.holdout("wrds", end_date="2024-12-31", start_date="1953-05-01")
+        F.holdout("wrds", end_date="2024-12-31", start_date="1953-05-01", respect_publication_lags=True)
         import validate_allocation_holdout as A
         A.OUT = OUT
         A.run(end_date="2024-12-31", dataset_name="wrds")

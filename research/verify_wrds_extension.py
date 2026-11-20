@@ -49,6 +49,7 @@ for dataset in ["wrds", "public_matched"]:
     frame = pd.read_csv(OUT / (dataset + "_chronological_holdout.csv"))
     assert len(frame) == 192
     assert frame.train_end.lt(frame.test_start).all()
+    assert (pd.to_datetime(frame.latest_training_publication)<pd.to_datetime(frame.test_start)).all()
     assert frame.n_overlapping_cohorts.gt(0).all()
 reproductions = {}
 for name in ["frontier", "signed_flow"]:
@@ -56,6 +57,12 @@ for name in ["frontier", "signed_flow"]:
     assert "reproduced " in log and "DIFFER" not in log
     if name == "frontier":
         assert "reproduced " + run_records[8] in log
+    else:
+        current = json.loads((OUT / "wrds_extended_runs.json").read_text())["signed_flow"]
+        assert current["spec"]["data"]["universe"] == "core_long_history"
+        signed = json.loads((OUT / (current["run_id"] + ".json")).read_text())
+        assert signed["universe"]["assets"] == ["us_eq", "tbill", "ust_10y"]
+        assert "reproduced " + current["run_id"] in log
     reproductions[name] = log.splitlines()[-1]
 verification = {"raw_input_hashes": "4 of 4 verified", "restricted_invalid_return_count": int(bad_returns.sum()),
     "nonfinite_values": 0, "duplicate_month_series_rows": 0,

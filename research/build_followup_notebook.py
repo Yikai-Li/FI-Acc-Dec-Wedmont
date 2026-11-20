@@ -294,6 +294,9 @@ frontiers, independent allocation tests, eight chronological folds per panel, an
 universe. It uses CRSP Treasury, equity, cash and inflation inputs and licensed ETF data. Raw licensed
 observations are excluded from the report and package. These results supersede the earlier pending-WRDS
 status, while the public-data results above remain their documented baseline.
+The extension now also corrects the WRDS signed-flow universe, evaluates 26 sensitivity configurations,
+100 training-history refits and nonoverlapping complete holding periods. Its corrected conditional-rule
+interval includes zero; the initial six-asset WRDS estimate is retained only as a superseded audit record.
 
 Employer installation awaits the employer's
 reply and GitHub username. The repository access and local execution steps remain pending that response.

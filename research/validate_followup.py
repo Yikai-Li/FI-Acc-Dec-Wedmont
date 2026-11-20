@@ -106,7 +106,7 @@ def frontiers(dataset):
     save(dataset + "_frontier_runs.json", results)
 
 
-def holdout(dataset, end_date="2026-09-30", start_date=None):
+def holdout(dataset, end_date="2026-09-30", start_date=None, respect_publication_lags=False):
     """Freeze allocations on pre-split bootstrap paths, score completed post-split historical cohorts."""
     from lifecycle.data import panel
     from lifecycle.runs import context as C
@@ -122,8 +122,13 @@ def holdout(dataset, end_date="2026-09-30", start_date=None):
     rows, fitted = [], []
     for horizon in (10, 20):
         for split in splits:
+            train_end = f"{split - 1}-12-31"
+            latest_publication = None
+            if respect_publication_lags:
+                from calibration_cutoff import known_history_end
+                train_end, latest_publication = known_history_end(universe, train_end, f"{split}-01-01")
             train_data = S.StudyData(universe=universe, calibration_start=data_start,
-                                     calibration_end=f"{split - 1}-12-31")
+                                     calibration_end=train_end)
             test_data = S.StudyData(universe=universe, calibration_start=f"{split}-01-01",
                                     calibration_end=end_date)
             available = len(panel.universe_data(universe, test_data.calibration_start, test_data.calibration_end).real)
@@ -165,6 +170,7 @@ def holdout(dataset, end_date="2026-09-30", start_date=None):
                                  "age_only_success": float((restricted.first_shortfall < 0).mean()),
                                  "n_overlapping_cohorts": len(full.terminal),
                                  "train_end": train_data.calibration_end, "test_start": test_data.calibration_start,
+                                 "latest_training_publication": latest_publication,
                                  "catalog_hash": panel.catalog_hash()})
             fitted.append({"split_year": split, "horizon": horizon, "best_b": bs[best].tolist(),
                            "age_only_b": bs[age_only].tolist(), "train_ce": train_ce.tolist()})
@@ -172,6 +178,7 @@ def holdout(dataset, end_date="2026-09-30", start_date=None):
     pd.DataFrame(rows).to_csv(OUT / f"{dataset}_chronological_holdout.csv", index=False)
     save(f"{dataset}_holdout_specs.json", {"ages": ages, "q": qs, "bond_grid": bs.tolist(),
           "gamma": 4, "train_paths": 4000, "seed": 20261119, "catalog_hash": panel.catalog_hash(),
+          "respect_recorded_publication_lags": respect_publication_lags,
           "cell_weighting": "equal weights over the declared age and signed-flow grid",
           "objective": "CRRA certainty equivalent of terminal real wealth plus funded draws, USD 1000 floor",
           "inference": "descriptive completed overlapping cohorts, without iid confidence intervals", "fitted": fitted})
