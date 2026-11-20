@@ -32,7 +32,7 @@
     }
   },
   "dependency_audit": "6 advisories remain (1 high, 4 moderate, 1 low), see npm_audit_after.json",
-  "WRDS": "account not configured; observed public IEF and GLD validation completed",
+  "WRDS": "Approved masters account found; browser login reached mandatory first-time Duo enrollment; awaiting user phone setup",
   "employer_setup": "awaiting employer reply and GitHub username",
   "recording": "no recording or transcript located in the searched email, Drive and project files",
   "frozen_etf_snapshot": "550 monthly observations restored to identical catalog hash 9c9ac4174cebffdd"

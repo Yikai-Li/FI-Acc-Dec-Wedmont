@@ -605,7 +605,7 @@ index 13bacca..8fe4125 100644
  | Python | 3.12 (exactly; `requires-python = ">=3.12,<3.13"`) | |
 diff --git a/research/build_followup_notebook.py b/research/build_followup_notebook.py
 new file mode 100644
-index 0000000..6c75b5b
+index 0000000..97699df
 --- /dev/null
 +++ b/research/build_followup_notebook.py
 @@ -0,0 +1,316 @@
@@ -899,7 +899,7 @@ index 0000000..6c75b5b
 +results. Raw daily vendor responses remain local. The frozen monthly return snapshot is included.
 +`validation_manifest.json` records SHA-256 hashes of the report inputs.
 +
-+WRDS ingestion requires an account login and any Duo approval. Employer installation awaits the employer's
++WRDS ingestion is waiting for first-time Duo enrollment on the approved account. Employer installation awaits the employer's
 +reply and GitHub username. The repository access and local execution steps remain pending that response.
 +The reviewed email, Drive search and project files yielded the meeting invitation and follow-up email.
 +A recording link and transcript have yet to be located.

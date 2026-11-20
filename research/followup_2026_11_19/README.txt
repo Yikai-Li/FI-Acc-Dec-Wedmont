@@ -76,6 +76,7 @@ Outstanding external dependencies
 
 The employer has yet to reply with a GitHub username or confirm local installation. The connected account
 has read access to Tanish's repository, so source changes are delivered as a local branch and patch.
-WRDS ingestion requires account access. Public observed-ETF validation is complete.
+The user's WRDS account was approved on October 19. WRDS ingestion is waiting for first-time Duo
+enrollment, which the user must complete on their phone. Public observed-ETF validation is complete.
 The reviewed sources contain the Zoom invitation and follow-up email. A recording or transcript has yet
 to be located.

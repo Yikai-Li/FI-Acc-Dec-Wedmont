@@ -1,7 +1,7 @@
 {
   "date": "2026-11-19",
   "starting_commit": "4b0c23ec63f760feb8bcfbaecddd5746921f21d4",
-  "continuation_commit": "a0d4ad8518cf5eade0a9090b713fbd70204da0ff",
+  "continuation_commit": "345d92f1300e2f6763bbd30affa6dd8bd64d88e0",
   "engine_semantic_version": "2.3",
   "inputs": {
     "0f2900dc65ded619c306.json": "57044b88703971b33a4601311f7b1b67c187848c844ad399d4342aba5af25888",
@@ -42,6 +42,6 @@
     "observed_holdout_specs.json": "db1d3ffcaa7fb4a8a04c8e2d9017d96ec39082688500266d3693b1eca46e5474",
     "replay_verification.json": "578fc8e3b3e61954496ec3cf39e7f516ee8900c23dc3cbc2a1c7f335cdfb0c07",
     "snapshot_reproduction.json": "1b3025b3e57efc6b9ea8885520632af8e9c52911359b5b1cde00a502090e7021",
-    "verification.json": "2755f98be4169198a6305da745bb7c70f813ed5ceef837de8f49506ba2e62e2e"
+    "verification.json": "e19ad3fd13fa67f665663a6c29457191da973364e4dae2e395800c8959e6003f"
   }
 }
