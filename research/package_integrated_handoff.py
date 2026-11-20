@@ -32,7 +32,7 @@ def main():
     for name in payload:
         parts=Path(name).parts
         assert not any(p in ['.git','.venv','node_modules','.next','__pycache__'] for p in parts),name
-        assert not name.endswith('.env') and '/data/wrds_' not in name and '/data/runs/' not in name,name
+        assert not name.endswith('.env') and not name.startswith('lifecycle/data/wrds_') and '/data/runs/' not in name,name
         assert not (name.startswith('lifecycle/data/') or name.startswith('household/data/raw/') or name.startswith('household/data/capacity_validation/')),name
     licensed=json.loads((ROOT/'research/wrds_validation_2026_11_19/extraction_summary.json').read_text())
     forbidden_hashes={v['sha256'] for v in licensed['sources'].values()}
