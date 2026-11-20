@@ -1,8 +1,8 @@
 {
   "signed_flow": {
-    "run_id": "53b2e84a4b9895ad067a",
+    "run_id": "57e534824da155afbd59",
     "kind": "signed_flow",
-    "label": "WRDS age and signed cash flow",
+    "label": "WRDS matched three-asset age and cash-flow surface",
     "spec": {
       "ages": [
         25.0,
@@ -24,7 +24,7 @@
         "calibration_end": "2024-12-31",
         "calibration_start": "1953-01-01",
         "catalog_hash": "c1f8e3775eab9dd7",
-        "universe": "core"
+        "universe": "core_long_history"
       },
       "equity": "us_eq",
       "horizon_years": 20,
@@ -86,7 +86,7 @@
       "w_ref": 1000000.0
     },
     "catalog_hash": "c1f8e3775eab9dd7",
-    "engine_version": "0.2.3+f2df1bd6ee98"
+    "engine_version": "0.2.3+b0c1e245654a"
   },
   "permanent": {
     "run_id": "aa611787c22163372d8c",

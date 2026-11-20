@@ -8,7 +8,7 @@
   "historical_holdout": "8 folds and 192 cells per dataset; 384 cells total",
   "exact_reproduction": {
     "frontier": "reproduced 5ed2a2bb125f27cca2cb",
-    "signed_flow": "reproduced 53b2e84a4b9895ad067a"
+    "signed_flow": "reproduced 57e534824da155afbd59"
   },
   "backend_tests": "111 passed after credit timing correction",
   "restricted_data_in_notebook": "No raw vendor observations; aggregate artifacts only",

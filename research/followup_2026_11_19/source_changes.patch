@@ -647,10 +647,10 @@ index 13bacca..8fe4125 100644
  | Python | 3.12 (exactly; `requires-python = ">=3.12,<3.13"`) | |
 diff --git a/research/build_followup_notebook.py b/research/build_followup_notebook.py
 new file mode 100644
-index 0000000..e4655af
+index 0000000..655ddf1
 --- /dev/null
 +++ b/research/build_followup_notebook.py
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,326 @@
 +"""Build the English employer notebook from persisted, reproducible study outputs."""
 +from pathlib import Path
 +
@@ -947,6 +947,9 @@ index 0000000..e4655af
 +universe. It uses CRSP Treasury, equity, cash and inflation inputs and licensed ETF data. Raw licensed
 +observations are excluded from the report and package. These results supersede the earlier pending-WRDS
 +status, while the public-data results above remain their documented baseline.
++The extension now also corrects the WRDS signed-flow universe, evaluates 26 sensitivity configurations,
++100 training-history refits and nonoverlapping complete holding periods. Its corrected conditional-rule
++interval includes zero; the initial six-asset WRDS estimate is retained only as a superseded audit record.
 +
 +Employer installation awaits the employer's
 +reply and GitHub username. The repository access and local execution steps remain pending that response.
@@ -974,12 +977,171 @@ index 0000000..e4655af
 +    "title": "Fixed-income allocation validation"})
 +nbf.write(notebook, OUT / "fixed_income_validation.ipynb")
 +print("Created", OUT / "fixed_income_validation.ipynb")
+diff --git a/research/build_robustness_section.py b/research/build_robustness_section.py
+new file mode 100644
+index 0000000..b23b37f
+--- /dev/null
++++ b/research/build_robustness_section.py
+@@ -0,0 +1,153 @@
++"""Append the exploratory robustness evidence to the English employer notebook."""
++
++
++def append_robustness(md, code):
++    md("""## Further validation: selection uncertainty and complete historical periods
++
++The initial WRDS signed-flow extension accidentally used the `core` universe, which includes three
++additional Treasury maturities, whereas the public study uses `core_long_history` with three assets.
++Although their portfolio weights were zero, unused assets changed the automatically selected joint
++bootstrap block length. We corrected the WRDS surface to the explicit three-asset universe. The
++earlier six-asset run remains in the audit files and is superseded by the corrected result above.
++
++This is a retrospective exploratory extension. `robustness/design.json` was saved before these
++calculations; it is not an independent preregistration. The new tests examine simulation noise,
++return dependence, transaction costs, allocation-grid resolution and objective definitions.
++All configurations and negative results are retained.
++
++The sensitivity analysis uses 4,000 training paths and 10,000 separate evaluation paths. It retains the
++original 19 flow values and two unique effective horizons, 10 and 20 years. Original age-cell weights
++are 1/7 and 6/7 because six declared ages duplicate the 20-year experiment. An alternative gives the
++two distinct horizons equal weight. Other checks use five random seeds; mean bootstrap blocks of
++1, 6, 12 and 24 months plus the automatic choice; a Student-t generator on the same path count and
++allocation grid; five-basis-point half-spreads; a five-percentage-point bond grid; risk aversion
++2, 4, 6 and 8; resource floors of USD 100, 1,000 and 10,000; and a six-point flow grid.
++
++We also test a proposed shrinkage rule. The first 2,000 training paths fit conditional and horizon-only
++allocations. A separate set of 2,000 validation paths chooses alpha from 0, 0.25, 0.5, 0.75 and 1 for
++`b = b_horizon + alpha * (b_conditional - b_horizon)`, rounded to the tested grid. Allocations are then
++refitted on all 4,000 training paths with alpha frozen, before evaluating the untouched test paths.
++Alpha zero recovers the restricted rule. We do not select the winning alpha on the evaluation sample.
++This follows the separation-of-selection-and-evaluation principle in
++[Varma and Simon (2006)](https://doi.org/10.1186/1471-2105-7-91); it does not replicate their classifier experiment.
++""")
++    code('''ROB = OUT/'robustness'
++sens=pd.read_csv(ROB/'sensitivity_scores.csv')
++main_mask=(sens.gamma.eq(4)&sens.resource_floor.eq(1000)&sens.weighting.eq('original_age_weights')&sens.flow_grid.eq('full'))
++primary=sens[main_mask].copy()
++primary['condition']=np.select([primary.bond_step.eq(.05),primary.cost_half_spread_bps.eq(5),primary.generator.eq('student_t'),primary.requested_block.isna()],
++    ['5pp bond grid','5bp half-spread','Student-t','Automatic block'],default='Fixed block')
++fixed=primary.condition.eq('Fixed block')
++primary.loc[fixed,'condition']='Block '+primary.loc[fixed,'requested_block'].astype(int).astype(str)+' months'
++summary=primary.groupby(['condition','policy']).agg(median_ce=('relative_resources_ce','median'),
++    minimum_ce=('relative_resources_ce','min'),maximum_ce=('relative_resources_ce','max'),seeds=('seed','nunique'),
++    median_success_difference_pp=('success_difference_pp','median')).reset_index()
++summary.to_csv(ROB/'configuration_summary.csv',index=False)
++display(summary[summary.policy.isin(['full','validated_shrinkage'])].round(5))
++baseline=primary[primary.condition.eq('Automatic block')]
++display(baseline[['seed','policy','relative_resources_ce','relative_terminal_ce','success_difference_pp','selected_alpha']].round(5))
++full=baseline[baseline.policy.eq('full')]
++display(Markdown(f"With the corrected three-asset setting and 10,000 evaluation paths, the five baseline seeds give conditional-versus-horizon-only resources CE changes from {full.relative_resources_ce.min():.2%} to {full.relative_resources_ce.max():.2%}, with a median of {full.relative_resources_ce.median():.2%}. Seeds reuse the same historical calibration and are not five independent economic samples."))
++fig,ax=plt.subplots(figsize=(10,4.5))
++conditions=list(summary.condition.unique())
++for j,policy in enumerate(['full','validated_shrinkage']):
++    g=summary[summary.policy.eq(policy)].set_index('condition').loc[conditions]
++    y=np.arange(len(g))+(j-.5)*.16
++    for i,(_,r) in enumerate(g.iterrows()):
++        ax.plot([100*r.minimum_ce,100*r.maximum_ce],[y[i],y[i]],color=['tab:blue','tab:orange'][j])
++    ax.plot(100*g.median_ce,y,'o',label=policy,color=['tab:blue','tab:orange'][j])
++ax.axvline(0,color='black',lw=1)
++ax.set_yticks(range(len(conditions)),conditions)
++ax.set(xlabel='Resources CE vs horizon-only (%): median and seed range',title='Simulation and modeling sensitivity; ranges are not confidence intervals')
++ax.legend(frameon=False)
++export('robustness_configuration_sensitivity')
++preference=sens[sens.generator.eq('bootstrap')&sens.requested_block.isna()&sens.cost_half_spread_bps.eq(0)&sens.bond_step.eq(.1)]
++pref_summary=preference.groupby(['gamma','resource_floor','weighting','flow_grid','policy']).relative_resources_ce.agg(['median','min','max']).reset_index()
++pref_summary.to_csv(ROB/'preference_summary.csv',index=False)
++display(pref_summary[pref_summary.policy.isin(['full','validated_shrinkage'])].round(5))
++''')
++    md("""## Historical tests without overlapping holding periods
++
++For each horizon, we now partition the realized history into complete periods starting in 1980:
++nine five-year periods, four ten-year periods and two twenty-year periods. An expanding training
++sample ends before each period begins. Both public and CRSP versions use the same periods, a
++5-percentage-point bond grid, six declared flows, gamma 4, a USD 1,000 resource floor and 5bp
++half-spreads. Shrinkage tuning uses only pre-period simulation paths. Training weights the three
++unique horizons equally, avoiding duplicated age cells.
++
++Training rows must also have recorded publication dates before the portfolio decision. With the
++panel's 15-day CPI lag, a January decision can use the joint real-return history only through the
++previous November. We corrected the earlier December cutoff and recomputed both the rolling-cohort
++and nonoverlapping WRDS/public historical tests. This enforces the recorded lag on revised extracts;
++archival real-time data vintages are unavailable, so it is not a complete real-time-vintage backtest.
++
++Return months do not overlap within a given horizon. Different flows and policies still share each
++period; horizons also share months. Adjacent periods need not be statistically independent. Therefore
++we report period outcomes and certainty equivalents across the actual number of periods, without a
++pooled significance test. Two twenty-year observations cannot establish population predictability.
++""")
++    code('''historical=pd.concat([pd.read_csv(ROB/(d+'_nonoverlap.csv')) for d in ['wrds','public']],ignore_index=True)
++reference=historical[historical.policy.eq('horizon_only')][['dataset','horizon','start_year','q','resources','success','unmet']]
++historical=historical.merge(reference,on=['dataset','horizon','start_year','q'],suffixes=('','_restricted'),validate='many_to_one')
++assert (pd.to_datetime(historical.latest_training_publication)<pd.to_datetime(historical.decision_date)).all()
++historical['relative_realized_resources']=historical.resources/historical.resources_restricted-1
++period_summary=historical.groupby(['dataset','horizon','start_year','end_year','policy']).relative_realized_resources.mean().reset_index()
++period_summary.to_csv(ROB/'nonoverlap_period_summary.csv',index=False)
++ce_rows=[]
++for (dataset,horizon,policy),g in historical.groupby(['dataset','horizon','policy']):
++    ce_deltas=[]
++    for q,cell in g.groupby('q'):
++        a=np.maximum(cell.resources.to_numpy(),1000.)
++        b=np.maximum(cell.resources_restricted.to_numpy(),1000.)
++        ce_deltas.append((np.mean(a**-3)/np.mean(b**-3))**(-1/3)-1)
++    draws=g[g.q>0]
++    ce_rows.append({'dataset':dataset,'horizon':horizon,'policy':policy,'nonoverlapping_periods':g.start_year.nunique(),
++        'mean_flow_relative_ce':np.mean(ce_deltas),'draw_success':draws.success.mean(),
++        'draw_success_difference_pp':100*(draws.success.astype(float)-draws.success_restricted.astype(float)).mean(),
++        'mean_draw_unmet':draws.unmet.mean()})
++historical_ce=pd.DataFrame(ce_rows)
++historical_ce.to_csv(ROB/'nonoverlap_ce_summary.csv',index=False)
++display(historical_ce[historical_ce.policy.isin(['full','validated_shrinkage','flow_only'])].round(5))
++fig,axes=plt.subplots(1,3,figsize=(13,3.8),layout='constrained')
++for ax,h in zip(axes,[5,10,20]):
++    for dataset,marker in [('wrds','o'),('public','x')]:
++        g=period_summary[period_summary.dataset.eq(dataset)&period_summary.horizon.eq(h)&period_summary.policy.eq('full')]
++        ax.plot(g.start_year,100*g.relative_realized_resources,marker=marker,label=dataset)
++    ax.axhline(0,color='black',lw=1)
++    ax.set(title=f'{h}-year periods',xlabel='First test year',ylabel='Mean realized resources difference (%)')
++axes[0].legend(frameon=False)
++export('robustness_nonoverlap_periods')
++''')
++    md("""## Resampling training history and refitting the rule
++
++The earlier paired-path interval holds the fitted rule fixed. Here 100 stationary-bootstrap histories
++resample the joint return/inflation vector, with a mean block length of 12 months. Each pseudo-history
++refits a 12-month-block training generator and the portfolio rules on 2,000 paths, including a 1,000/1,000
++fit/validation split for alpha. Common inner simulation innovations reduce variation from unrelated
++random numbers. We evaluate every refitted rule against its refitted restricted comparator using the
++same reference future grid of 10,000 paths from the original automatic-block generator.
++
++This follows the refitting logic of the [stationary bootstrap, Politis and Romano (1994)](https://doi.org/10.1080/01621459.1994.10476870).
++The 2.5th-97.5th percentile range measures refit sensitivity under this design. It combines training
++history variation, the specified 12-month training dependence model and finite inner fitting noise.
++It conditions on the fixed reference future model and does not provide a confidence interval covering
++all future return uncertainty. One hundred refits provide only a coarse estimate of the tails.
++""")
++    code('''refits=pd.read_csv(ROB/'history_refit_scores.csv')
++refit_summary=refits.groupby('policy').relative_resources_ce.agg(repetitions='size',median='median',
++    q025=lambda x:x.quantile(.025),q975=lambda x:x.quantile(.975),positive_fraction=lambda x:(x>0).mean()).reset_index()
++refit_summary.to_csv(ROB/'history_refit_summary.csv',index=False)
++display(refit_summary.round(5))
++full_refit=refit_summary[refit_summary.policy.eq('full')].iloc[0]
++display(Markdown(f"Only {full_refit.positive_fraction:.0%} of history refits produce a positive conditional-rule CE difference. Its median is {full_refit['median']:.2%}, and its central refit range is [{full_refit.q025:.2%}, {full_refit.q975:.2%}]. The sign is not stable under this refitting design."))
++fig,ax=plt.subplots(figsize=(9,4))
++for policy in ['full','flow_only','validated_shrinkage']:
++    values=100*refits.loc[refits.policy.eq(policy),'relative_resources_ce']
++    ax.hist(values,bins=20,alpha=.4,label=policy)
++ax.axvline(0,color='black',lw=1)
++ax.set(xlabel='Resources CE vs refitted horizon-only rule (%)',ylabel='Number of history refits',
++       title='Training-history refit sensitivity; fixed reference future model')
++ax.legend(frameon=False)
++export('robustness_history_refits')
++display(pd.DataFrame([json.loads((ROB/'verification.json').read_text())]).T.rename(columns={0:'verification'}))
++''')
 diff --git a/research/build_wrds_notebook.py b/research/build_wrds_notebook.py
 new file mode 100644
-index 0000000..6edb3e6
+index 0000000..c398171
 --- /dev/null
 +++ b/research/build_wrds_notebook.py
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,335 @@
 +"""Create the English WRDS extension from aggregate study artifacts only."""
 +from pathlib import Path
 +import nbformat as nbf
@@ -1178,11 +1340,15 @@ index 0000000..6edb3e6
 +conditional allocations, not annual adaptive retraining.
 +Both historical comparisons begin training in May 1953. The separate objective-selection experiment
 +uses the January 1953-December 2024 CRSP sample, 5,000 training paths and 10,000 evaluation paths.
++Historical training also respects the recorded 15-day CPI publication lag: January allocations use
++joint return history through the previous November. Revised extracts remain a limitation.
 +""")
 +code('''signed=result(extended['signed_flow'])
 +comparison=signed['policies']['oos_full_vs_age']
 +display(pd.DataFrame([comparison]))
 +display(Markdown(f"The independent simulation estimate for age-plus-flow versus age-only resources CE is {comparison['delta']:.2%}, with a paired-path 95% interval [{comparison['lo']:.2%}, {comparison['hi']:.2%}]. This interval is conditional on the return model and trained policies."))
++if comparison['lo']<=0<=comparison['hi']:
++    display(Markdown('The corrected matched-universe interval includes zero. This experiment does not establish that conditioning allocation on cash flows improves performance over the horizon-only rule. The further validation section reports seed, specification and historical refitting checks.'))
 +fig,ax=plt.subplots(figsize=(9,4))
 +im=ax.pcolormesh(100*np.array(signed['q']),signed['ages'],100*np.array(signed['b_ce']),shading='nearest',cmap='viridis',vmin=0,vmax=100)
 +ax.set(xlabel='Annual planned net draw / initial wealth (%)',ylabel='Starting age',title='CRSP: training-optimal bond allocation (resources CE)')
@@ -1259,6 +1425,9 @@ index 0000000..6edb3e6
 +                     for name,z in [('permanent',pp),('multi_asset',multi)]]))
 +display(pd.DataFrame([read('verification.json')]).T.rename(columns={0:'result'}))
 +''')
++from build_robustness_section import append_robustness
++append_robustness(md, code)
++
 +md("""## Interpretation and remaining limits
 +
 +Return measurement changes the estimated spending-success frontier enough to change whether a 90%
@@ -1273,6 +1442,11 @@ index 0000000..6edb3e6
 +Monte Carlo intervals measure simulation uncertainty. Country effects, cohort effects, human-capital
 +risk and changes in household preferences remain outside this return-based extension.
 +
++The corrected matched-universe signed-flow result supersedes the initial six-asset WRDS extension.
++The robustness section separates fixed-policy simulation intervals, sensitivity across specifications,
++training-history refit dispersion and realized nonoverlapping periods. These quantities answer different
++questions and are not interchangeable confidence statements.
++
 +The notebook is executable from the supplied aggregate JSON and CSV artifacts without a WRDS account.
 +Recomputing the restricted-data studies requires an entitled WRDS academic account. Run
 +`research/extract_wrds_cloud.py` in WRDS Cloud, retain the exported files locally under
@@ -1283,10 +1457,15 @@ index 0000000..6edb3e6
 +backend/.venv/Scripts/python.exe research/validate_wrds_followup.py --dataset public
 +backend/.venv/Scripts/python.exe research/validate_wrds_followup.py --dataset treasury_only
 +backend/.venv/Scripts/python.exe research/validate_wrds_followup.py --dataset wrds
++backend/.venv/Scripts/python.exe research/robustness_followup.py --stage sensitivity
++backend/.venv/Scripts/python.exe research/robustness_followup.py --stage nonoverlap --dataset wrds
++backend/.venv/Scripts/python.exe research/robustness_followup.py --stage nonoverlap --dataset public
++backend/.venv/Scripts/python.exe research/robustness_followup.py --stage refit
++backend/.venv/Scripts/python.exe research/verify_robustness.py
 +```
 +
 +`public_matched_chronological_holdout.csv` is generated by calling
-+`validate_followup.holdout('public_matched', end_date='2024-12-31', start_date='1953-05-01')`
++`validate_followup.holdout('public_matched', end_date='2024-12-31', start_date='1953-05-01', respect_publication_lags=True)`
 +with the public data directory.
 +Hashes identify the exact restricted extracts and resolved panels; vendor revisions can change a fresh
 +extraction. The delivered package contains no restricted return observations. WRDS access has been
@@ -1298,6 +1477,34 @@ index 0000000..6edb3e6
 +nbf.write(notebook, OUT / "wrds_validation.ipynb")
 +(ROOT / "data/wrds_validation/report_prose.txt").write_text("\n\n".join(c.source for c in cells if c.cell_type == "markdown"), encoding="utf-8")
 +print("Created WRDS validation notebook")
+diff --git a/research/calibration_cutoff.py b/research/calibration_cutoff.py
+new file mode 100644
+index 0000000..4065b2d
+--- /dev/null
++++ b/research/calibration_cutoff.py
+@@ -0,0 +1,22 @@
++"""Respect recorded publication lags in retrospective historical calibration."""
++import pandas as pd
++
++from lifecycle.data import panel
++from lifecycle.data.series import UNIVERSES
++
++
++def known_history_end(universe, proposed_end, decision_date):
++    definition = UNIVERSES[universe]
++    ids = [*definition.required, definition.inflation]
++    deadline = pd.Timestamp(decision_date)
++    p = panel.panel()
++    eligible = p[p.series_id.isin(ids) & (p.month_end <= pd.Timestamp(proposed_end))
++                 & (p.available_from < deadline)]
++    latest = eligible.groupby('series_id').month_end.max()
++    if set(latest.index) != set(ids):
++        raise ValueError('Required inputs are unavailable before the portfolio decision')
++    cutoff = latest.min()
++    included = p[p.series_id.isin(ids) & (p.month_end <= cutoff)]
++    if not (included.available_from < deadline).all():
++        raise ValueError('A training observation is not yet published at the decision date')
++    return cutoff.date().isoformat(), included.available_from.max().date().isoformat()
 diff --git a/research/extract_wrds_cloud.py b/research/extract_wrds_cloud.py
 new file mode 100644
 index 0000000..5fd47ed
@@ -1489,10 +1696,10 @@ index 0000000..517dc01
 +print("Treasury-only bridge catalog:", bridge["catalog_hash"])
 diff --git a/research/package_followup.py b/research/package_followup.py
 new file mode 100644
-index 0000000..95a1aa8
+index 0000000..284be57
 --- /dev/null
 +++ b/research/package_followup.py
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,121 @@
 +"""Package executed reports and aggregate evidence, excluding licensed inputs."""
 +import hashlib
 +import json
@@ -1531,6 +1738,14 @@ index 0000000..95a1aa8
 +history = history[history.dataset.eq("wrds")]
 +allocation = pd.read_csv(WRDS / "allocation_objective_summary.csv")
 +a5 = allocation[allocation.withdrawal_rate.eq(.05)].iloc[0]
++rob = WRDS / "robustness"
++refit = pd.read_csv(rob / "history_refit_scores.csv")
++full_refit = refit[refit.policy.eq("full")].relative_resources_ce
++sensitivity = pd.read_csv(rob / "sensitivity_scores.csv")
++seed_results = sensitivity[sensitivity.generator.eq("bootstrap") & sensitivity.requested_block.isna()
++    & sensitivity.cost_half_spread_bps.eq(0) & sensitivity.bond_step.eq(.1) & sensitivity.gamma.eq(4)
++    & sensitivity.resource_floor.eq(1000) & sensitivity.weighting.eq("original_age_weights")
++    & sensitivity.flow_grid.eq("full") & sensitivity.policy.eq("full")].relative_resources_ce
 +readme = f"""Fixed-income allocation: completed public and WRDS validation
 +November 19, 2026 (America/New_York)
 +
@@ -1546,9 +1761,15 @@ index 0000000..95a1aa8
 +Using all CRSP core inputs over 2002-2024 gives {modern.loc['wrds','best_success']:.2%} at the best tested allocation. The result depends
 +on the return source, sample and scenario generator; there is no supported universal bond minimum.
 +
-+The WRDS age-plus-flow rule gains {delta['delta']:.2%} resources CE over age-only on independent simulation paths
-+(95% paired interval {delta['lo']:.2%} to {delta['hi']:.2%}). Historical fold means are positive in {(history.mean_relative_ce>0).sum()} of {len(history)} folds, with a
-+range of {history.mean_relative_ce.min():.2%} to {history.mean_relative_ce.max():.2%}. Overlapping cohorts are not independent replications.
++The corrected three-asset WRDS age-plus-flow rule changes resources CE by {delta['delta']:.2%} versus age-only
++(95% paired interval {delta['lo']:.2%} to {delta['hi']:.2%}, including zero). Five simulation seeds give a range
++of {seed_results.min():.2%} to {seed_results.max():.2%}. The initial six-asset 0.61% estimate is superseded: unused Treasury
++assets changed the automatically fitted block length and prevented a matched comparison.
++
++Only {(full_refit>0).mean():.0%} of 100 training-history refits produce a positive CE difference. The central refit range is
++{full_refit.quantile(.025):.2%} to {full_refit.quantile(.975):.2%}; this is sensitivity conditional on a fixed future model, not a
++general confidence interval. Completed nonoverlapping tests contain nine five-year, four ten-year
++and two twenty-year periods per dataset. No consistent superiority of the conditional rule is established.
 +At 5% withdrawals, utility and spending-success optimization select {a5.ce_selected_bonds:.0%} and {a5.success_selected_bonds:.0%} bonds respectively.
 +The utility policy gains {a5.ce_gain:.2%} CE and changes success by {(a5.ce_policy_success-a5.success_policy_success)*100:.2f} percentage points on independent test paths.
 +
@@ -1556,9 +1777,11 @@ index 0000000..95a1aa8
 +
 +Completed checks
 +
-+12 matched-window frontier studies; 384 chronological age/flow cells; four verified extraction hashes;
++12 matched-window frontier studies; 384 earlier chronological age/flow cells; four verified extraction hashes;
 +zero invalid restricted returns or duplicate month/series records; exact frontier and signed-flow
-+reproduction; 111 backend tests. The earlier frontend checks remain 230 unit tests, 26 browser tests,
++reproduction; 111 backend tests and four analytical robustness tests. The extension adds 26 sensitivity
++configurations, 100 history refits and 900 policy/flow outcomes across 30 complete nonoverlapping periods
++(15 per dataset; horizons share months). The earlier frontend checks remain 230 unit tests, 26 browser tests,
 +type-check and production build passed. The existing lint warning and six dependency advisories remain
 +documented in the public report. The full 12-sleeve multi-asset study and Permanent Portfolio now run.
 +
@@ -1770,6 +1993,360 @@ index 1943c0e..cf06aca 100644
 +  }
  }
 \ No newline at end of file
+diff --git a/research/robustness_followup.py b/research/robustness_followup.py
+new file mode 100644
+index 0000000..9fc1e6e
+--- /dev/null
++++ b/research/robustness_followup.py
+@@ -0,0 +1,291 @@
++"""Exploratory robustness extension; licensed observations never enter exported artifacts."""
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++from numba import set_num_threads
++
++from lifecycle.data import panel
++from lifecycle.engine.scenarios import ScenarioTensor, generate
++from lifecycle.engine.scenarios.bootstrap import StationaryBootstrap
++from lifecycle.engine.scenarios.student_t import MultivariateT
++from lifecycle.runs import context as C
++from lifecycle.studies import common as S
++from lifecycle.studies.signed_flow import DEFAULT_Q
++
++ROOT = Path(__file__).resolve().parents[1]
++OUT = ROOT / "research/wrds_validation_2026_11_19/robustness"
++OUT.mkdir(exist_ok=True)
++COMPACT_Q = np.array([-.05, -.02, 0, .02, .04, .06])
++FULL_Q = np.array(DEFAULT_Q)
++ALPHAS = np.array([0, .25, .5, .75, 1.])
++SEEDS = [20261119, 20261120, 20261121, 20261122, 20261123]
++
++
++def save(name, obj):
++    (OUT / name).write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
++
++
++def setup(dataset):
++    os.environ["LIFECYCLE_DATA_DIR"] = str(ROOT / "data" / ("wrds_validation" if dataset == "wrds" else ""))
++    panel.reload()
++    C._MODELS.clear()
++    C._TENSORS.clear()
++
++
++def context(tensor, start, end, seed, horizon):
++    es = S.experiment_spec(S.StudyData(universe="core_long_history", calibration_start=start, calibration_end=end),
++        S.StudyScenario(n_paths=max(100, tensor.n_paths), n_train_paths=100, seed=seed, k_regimes=1),
++        S.StudyInvestor(age=65, horizon_years=horizon))
++    return S.get_context(es, tensor, seed)
++
++
++def tensor_from_history(u, n, months, seed, generator="bootstrap", block=None):
++    model = (StationaryBootstrap(u.real_array(), u.inflation.to_numpy(), block_length=block)
++             if generator == "bootstrap" else MultivariateT(u.real_array(), u.inflation.to_numpy()))
++    return generate(model, u.assets, n, months, seed), model
++
++
++def grid(tensor, start, end, seed, horizons, qs, bs, cost=0, resources_only=False):
++    result = {"resources": np.empty((len(horizons), len(qs), len(bs), tensor.n_paths))}
++    if not resources_only:
++        result.update(terminal=np.empty_like(result["resources"]), unmet=np.empty_like(result["resources"]),
++                      success=np.empty(result["resources"].shape, dtype=bool))
++    trading = S.strategy("calendar_12m", S.StudyCosts(half_spread_bps=cost))
++    for hi, horizon in enumerate(horizons):
++        ctx = context(tensor.head(horizon*12), start, end, seed, horizon)
++        for qi, q in enumerate(qs):
++            for bi, b in enumerate(bs):
++                weights = S.weights_vector({"us_eq": 1-b, "ust_10y": b}, tensor.assets)
++                out = S.run(ctx, weights, trading, spend="signed", q=float(q), zero_income=True)
++                result["resources"][hi, qi, bi] = out.terminal+out.funded
++                if not resources_only:
++                    result["terminal"][hi, qi, bi] = out.terminal
++                    result["unmet"][hi, qi, bi] = out.unmet
++                    result["success"][hi, qi, bi] = out.first_shortfall < 0
++    return result
++
++
++def ce(values, gamma=4, floor=1000):
++    x = np.maximum(values, floor)/1e6
++    return (np.exp(np.log(x).mean(axis=-1)) if gamma == 1 else
++            (x**(1-gamma)).mean(axis=-1)**(1/(1-gamma)))*1e6
++
++
++def chosen(array, indices):
++    return array[np.arange(indices.shape[0])[:, None], np.arange(indices.shape[1])[None, :], indices]
++
++
++def fit_policies(train, bs, hweights, gamma=4, floor=1000):
++    """Tune shrinkage on A2, refit allocations on A1+A2; evaluation paths never enter."""
++    nh, nq = train.shape[:2]
++
++    def fit(values):
++        scores = ce(values, gamma, floor)
++        relative = scores/scores.max(axis=2, keepdims=True)
++        full = scores.argmax(axis=2)
++        restricted = np.repeat(relative.mean(axis=1).argmax(axis=1)[:, None], nq, axis=1)
++        qonly = np.repeat(np.sum(relative*hweights[:, None, None], axis=0).argmax(axis=1)[None, :], nh, axis=0)
++        return full, restricted, qonly
++
++    split = train.shape[-1]//2
++    first_full, first_restricted, _ = fit(train[..., :split])
++    validation = ce(train[..., split:], gamma, floor)
++    normalizer = validation.max(axis=2)
++    candidates = []
++    for alpha in ALPHAS:
++        bond = bs[first_restricted]+alpha*(bs[first_full]-bs[first_restricted])
++        indices = np.abs(bond[..., None]-bs).argmin(axis=-1)
++        candidates.append(float(np.sum((chosen(validation, indices)/normalizer).mean(axis=1)*hweights)))
++    alpha = float(ALPHAS[np.argmax(candidates)])
++    full, restricted, qonly = fit(train)
++    bond = bs[restricted]+alpha*(bs[full]-bs[restricted])
++    shrink = np.abs(bond[..., None]-bs).argmin(axis=-1)
++    return {"full": full, "horizon_only": restricted, "flow_only": qonly, "validated_shrinkage": shrink,
++            "sixty_forty": np.full((nh, nq), np.abs(bs-.4).argmin(), dtype=int)}, alpha
++
++
++def evaluate(test, policies, hweights, qs, gamma=4, floor=1000):
++    scores = ce(test["resources"], gamma, floor)
++    terminal = ce(test["terminal"], gamma, floor)
++    reference = chosen(scores, policies["horizon_only"])
++    terminal_ref = chosen(terminal, policies["horizon_only"])
++    draw = np.asarray(qs)>0
++    base_success = chosen(test["success"], policies["horizon_only"]).mean(axis=-1)
++    rows = []
++    for name, indices in policies.items():
++        resources = chosen(scores, indices)
++        success = chosen(test["success"], indices).mean(axis=-1)
++        unmet = chosen(test["unmet"], indices)
++        tails = np.apply_along_axis(S.cvar, -1, unmet)
++        rows.append({"policy": name,
++            "relative_resources_ce": float(np.sum((resources/reference-1).mean(axis=1)*hweights)),
++            "relative_terminal_ce": float(np.sum((chosen(terminal, indices)/terminal_ref-1).mean(axis=1)*hweights)),
++            "withdrawal_success": float(np.sum(success[:, draw].mean(axis=1)*hweights)),
++            "success_difference_pp": float(np.sum((success[:, draw]-base_success[:, draw]).mean(axis=1)*hweights)*100),
++            "withdrawal_unmet_mean": float(np.sum(unmet[:, draw].mean(axis=(-1, -2))*hweights)),
++            "mean_cell_unmet_cvar95": float(np.sum(tails[:, draw].mean(axis=1)*hweights))})
++    return rows
++
++
++def sensitivity():
++    setup("wrds")
++    u = panel.universe_data("core_long_history", "1953-01-01", "2024-12-31")
++    configs = [(s, "bootstrap", None, 0, .1) for s in SEEDS]
++    configs += [(s, "bootstrap", b, 0, .1) for b in [1, 6, 12, 24] for s in SEEDS[:3]]
++    configs += [(s, "bootstrap", None, 5, .1) for s in SEEDS[:3]]
++    configs += [(s, "student_t", None, 0, .1) for s in SEEDS[:3]]
++    configs += [(s, "bootstrap", None, 0, .05) for s in SEEDS[:3]]
++    rows, allocations = [], []
++    for seed, generator, block, cost, step in configs:
++        bs = np.round(np.arange(0, 1+step/2, step), 4)
++        data = S.StudyData(universe="core_long_history", calibration_start="1953-01-01", calibration_end="2024-12-31")
++        es = S.experiment_spec(data, S.StudyScenario(n_paths=10000, n_train_paths=4000, seed=seed, k_regimes=1),
++                               S.StudyInvestor(age=65, horizon_years=20))
++        trainseed = C.train_seed(es)
++        train_tensor, model = tensor_from_history(u, 4000, 240, trainseed, generator, block)
++        test_tensor, _ = tensor_from_history(u, 10000, 240, seed, generator, block)
++        train = grid(train_tensor, "1953-01-01", "2024-12-31", trainseed, [10, 20], FULL_Q, bs, cost, True)["resources"]
++        test = grid(test_tensor, "1953-01-01", "2024-12-31", seed, [10, 20], FULL_Q, bs, cost)
++        settings = [(4, 1000, "original_age_weights", "full")]
++        if generator == "bootstrap" and block is None and cost == 0 and step == .1:
++            settings += [(g, 1000, "original_age_weights", "full") for g in [2, 6, 8]]
++            settings += [(4, f, "original_age_weights", "full") for f in [100, 10000]]
++            settings += [(4, 1000, "equal_effective_horizons", "full"), (4, 1000, "original_age_weights", "compact")]
++        for gamma, floor, weighting, flowset in settings:
++            qidx = np.arange(len(FULL_Q)) if flowset == "full" else np.array([np.flatnonzero(np.isclose(FULL_Q, q))[0] for q in COMPACT_Q])
++            tr = train[:, qidx]
++            te = {k: v[:, qidx] for k, v in test.items()}
++            qs = FULL_Q[qidx]
++            hw = np.array([1/7, 6/7]) if weighting == "original_age_weights" else np.array([.5, .5])
++            policies, alpha = fit_policies(tr, bs, hw, gamma, floor)
++            common = dict(seed=seed, generator=generator, requested_block=block,
++                fitted_block=model.block_length if generator == "bootstrap" else None,
++                cost_half_spread_bps=cost, bond_step=step, gamma=gamma, resource_floor=floor,
++                weighting=weighting, flow_grid=flowset, selected_alpha=alpha, catalog_hash=panel.catalog_hash())
++            for row in evaluate(te, policies, hw, qs, gamma, floor):
++                rows.append({**common, **row})
++            if gamma == 4 and floor == 1000 and weighting == "original_age_weights" and flowset == "full":
++                for policy, indices in policies.items():
++                    for hi, horizon in enumerate([10, 20]):
++                        for qi, q in enumerate(qs):
++                            allocations.append({**common, "policy": policy, "horizon": horizon,
++                                "q": q, "bond_share": bs[indices[hi, qi]]})
++            if seed == SEEDS[0] and generator == "bootstrap" and block is None and cost == 0 and step == .1 and flowset == "full" and gamma == 4 and floor == 1000:
++                cache = ROOT / "data/wrds_validation/robustness_cache"
++                cache.mkdir(exist_ok=True)
++                np.savez_compressed(cache / "reference_grid.npz", train=train,
++                    test_ce=ce(test["resources"]), bs=bs, catalog_hash=panel.catalog_hash())
++        pd.DataFrame(rows).to_csv(OUT / "sensitivity_scores.csv", index=False)
++        pd.DataFrame(allocations).to_csv(OUT / "allocation_stability.csv", index=False)
++        print("sensitivity completed", seed, generator, block, cost, step, flush=True)
++    save("sensitivity_metadata.json", {"configurations": len(configs), "training_paths": 4000,
++        "validation_split": "first 2000 A1, last 2000 A2; refit on 4000, score on disjoint 10000 B",
++        "test_paths": 10000, "horizons": [10, 20], "q_grid": FULL_Q.tolist(),
++        "original_age_weights": [1/7, 6/7], "equal_effective_horizon_weights": [.5, .5],
++        "alpha_grid": ALPHAS.tolist(), "inference": "descriptive configuration sensitivity; seeds share historical data"})
++
++
++def nonoverlap(dataset):
++    setup(dataset)
++    bs = np.round(np.arange(0, 1.001, .05), 4)
++    horizons = [5, 10, 20]
++    rows = []
++    periods = {h: [(y, y+h-1) for y in range(1980, 2025-h+1, h)] for h in horizons}
++    for h, spans in periods.items():
++        assert all(a[1]<b[0] for a, b in zip(spans, spans[1:]))
++    for year in range(1980, 2021, 5):
++        active = [h for h in horizons if any(start==year for start, end in periods[h])]
++        if not active:
++            continue
++        from calibration_cutoff import known_history_end
++        end, latest_publication = known_history_end("core_long_history", f"{year-1}-12-31", f"{year}-01-01")
++        u = panel.universe_data("core_long_history", "1953-05-01", end)
++        training, _ = tensor_from_history(u, 4000, 240, 810000+year, block=None)
++        train = grid(training, "1953-05-01", end, 810000+year, horizons, COMPACT_Q, bs, 5, True)["resources"]
++        policies, alpha = fit_policies(train, bs, np.ones(3)/3)
++        for horizon in active:
++            hi = horizons.index(horizon)
++            hist = panel.universe_data("core_long_history", f"{year}-01-01", f"{year+horizon-1}-12-31")
++            assert len(hist.real) == horizon*12
++            ten = ScenarioTensor(hist.assets, hist.real_array()[None, :, :], hist.inflation.to_numpy()[None, :],
++                                  np.zeros((1, horizon*12), dtype=np.int64), 1)
++            ctx = context(ten, f"{year}-01-01", f"{year+horizon-1}-12-31", 0, horizon)
++            for qi, q in enumerate(COMPACT_Q):
++                for policy, indices in policies.items():
++                    b = bs[indices[hi, qi]]
++                    out = S.run(ctx, S.weights_vector({"us_eq": 1-b, "ust_10y": b}, hist.assets),
++                        S.strategy("calendar_12m", S.StudyCosts(half_spread_bps=5)),
++                        spend="signed", q=float(q), zero_income=True)
++                    rows.append(dict(dataset=dataset, horizon=horizon, start_year=year, end_year=year+horizon-1,
++                        train_start="1953-05-01", train_end=end, decision_date=f"{year}-01-01",
++                        latest_training_publication=latest_publication, q=q, policy=policy, bond_share=b,
++                        alpha=alpha, terminal=float(out.terminal[0]), resources=float(out.terminal[0]+out.funded[0]),
++                        success=bool(out.first_shortfall[0]<0), unmet=float(out.unmet[0]),
++                        catalog_hash=panel.catalog_hash()))
++        pd.DataFrame(rows).to_csv(OUT / (dataset+"_nonoverlap.csv"), index=False)
++        print("nonoverlap completed", dataset, year, active, flush=True)
++    save(dataset+"_nonoverlap_metadata.json", {"periods": periods, "training_paths": 4000,
++        "alpha_grid": ALPHAS.tolist(), "half_spread_bps": 5, "gamma": 4, "floor": 1000,
++        "training_horizon_weighting": "equal over 5/10/20 years, unique horizon cells",
++        "catalog_hash": panel.catalog_hash(), "inference": "no overlapping return months within each horizon; serial dependence can remain; no pooled IID inference"})
++
++
++def refit(n_boot=100):
++    setup("wrds")
++    cache = np.load(ROOT / "data/wrds_validation/robustness_cache/reference_grid.npz")
++    assert str(cache["catalog_hash"]) == panel.catalog_hash()
++    test_ce, bs = cache["test_ce"], cache["bs"]
++    u = panel.universe_data("core_long_history", "1953-01-01", "2024-12-31")
++    outer = StationaryBootstrap(u.real_array(), u.inflation.to_numpy(), block_length=12)
++    rows, allocations = [], []
++    hw = np.array([1/7, 6/7])
++    for iteration in range(n_boot):
++        rr, ii, _ = outer.simulate(1, len(u.real), np.random.default_rng(920000+iteration), None)
++        fitted = StationaryBootstrap(rr[0], ii[0], block_length=12)
++        training = generate(fitted, u.assets, 2000, 240, 813773)
++        values = grid(training, "1953-01-01", "2024-12-31", 813773, [10, 20], FULL_Q, bs, 0, True)["resources"]
++        policies, alpha = fit_policies(values, bs, hw)
++        reference = chosen(test_ce, policies["horizon_only"])
++        for name in ["full", "flow_only", "validated_shrinkage"]:
++            score = float(np.sum((chosen(test_ce, policies[name])/reference-1).mean(axis=1)*hw))
++            rows.append(dict(iteration=iteration, policy=name, relative_resources_ce=score, alpha=alpha))
++            for hi, horizon in enumerate([10, 20]):
++                for qi, q in enumerate(FULL_Q):
++                    allocations.append(dict(iteration=iteration, policy=name, horizon=horizon, q=q,
++                                            bond_share=bs[policies[name][hi, qi]]))
++        pd.DataFrame(rows).to_csv(OUT / "history_refit_scores.csv", index=False)
++        if (iteration+1)%10 == 0:
++            print("history refits completed", iteration+1, flush=True)
++    pd.DataFrame(allocations).to_csv(OUT / "history_refit_allocations.csv", index=False)
++    save("history_refit_metadata.json", {"repetitions": n_boot, "outer_block_months": 12,
++        "inner_block_months": 12, "training_paths_per_refit": 2000, "reference_future_paths": 10000,
++        "common_inner_seed": 813773, "catalog_hash": panel.catalog_hash(),
++        "interpretation": "refit dispersion conditional on one fixed reference future model and finite inner simulation; not a general confidence interval or independent external validation"})
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--stage", choices=["sensitivity", "nonoverlap", "refit"], required=True)
++    parser.add_argument("--dataset", choices=["wrds", "public"], default="wrds")
++    parser.add_argument("--refits", type=int, default=100)
++    args = parser.parse_args()
++    set_num_threads(4)
++    if args.stage == "sensitivity":
++        sensitivity()
++    elif args.stage == "nonoverlap":
++        nonoverlap(args.dataset)
++    else:
++        refit(args.refits)
++    save(args.stage+"_"+args.dataset+"_identity.json", {
++        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++        "design_sha256": hashlib.sha256((OUT / "design.json").read_bytes()).hexdigest(),
++        "catalog_hash": panel.catalog_hash(), "engine_version": __import__("lifecycle.config", fromlist=["engine_version"]).engine_version()})
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/research/test_robustness_followup.py b/research/test_robustness_followup.py
+new file mode 100644
+index 0000000..de4f05a
+--- /dev/null
++++ b/research/test_robustness_followup.py
+@@ -0,0 +1,51 @@
++"""Analytical conservation and validation-separation checks for the extension."""
++import numpy as np
++import pandas as pd
++
++from lifecycle.engine.scenarios import ScenarioTensor
++from robustness_followup import ce, fit_policies, grid
++from calibration_cutoff import known_history_end
++
++
++def test_resource_ce_of_deterministic_values_matches_the_values():
++    values = np.array([100., 10000., 1000000.])[:, None]*np.ones((3, 20))
++    for gamma in [1, 2, 4, 8]:
++        assert np.allclose(ce(values, gamma, floor=100), values[:, 0])
++        assert np.allclose(ce(values*1.1, gamma, floor=100)/ce(values, gamma, floor=100)-1, .1)
++
++
++def test_validation_can_reject_conditional_fitting_noise():
++    train = np.empty((2, 2, 3, 100))
++    train[:, 0, :, :50] = np.array([110., 100., 80.])[None, :, None]
++    train[:, 1, :, :50] = np.array([80., 100., 110.])[None, :, None]
++    train[..., 50:] = np.array([80., 100., 80.])[None, None, :, None]
++    policies, alpha = fit_policies(train, np.array([0., .5, 1.]), np.array([.5, .5]), floor=1)
++    assert alpha == 0
++    assert np.array_equal(policies['validated_shrinkage'], policies['horizon_only'])
++
++
++def test_resource_grid_conserves_money_without_returns_or_costs():
++    assets = ('us_eq', 'tbill', 'ust_10y')
++    ten = ScenarioTensor(assets, np.zeros((4, 120, 3)), np.zeros((4, 120)),
++                         np.zeros((4, 120), dtype=np.int64), 1)
++    outputs = grid(ten, '1953-01-01', '2024-12-31', 3, [10], np.array([-.02, .04, .2]), np.array([.4]))
++    assert np.allclose(outputs['resources'][0, :, 0], np.array([1200000., 1000000., 1000000.])[:, None])
++    assert np.allclose(outputs['terminal'][0, :, 0], np.array([1200000., 600000., 0.])[:, None])
++    assert np.allclose(outputs['unmet'][0, 2, 0], 1000000.)
++    assert outputs['success'][0, 0, 0].all() and outputs['success'][0, 1, 0].all()
++    assert not outputs['success'][0, 2, 0].any()
++
++
++def test_january_decision_excludes_unpublished_december_cpi(monkeypatch):
++    from lifecycle.data import panel
++
++    dates = pd.to_datetime(['1999-11-30', '1999-12-31'])
++    rows = []
++    for sid in ['us_eq', 'tbill', 'ust_10y', 'cpi_nsa']:
++        for date in dates:
++            rows.append(dict(series_id=sid, month_end=date,
++                available_from=date+pd.Timedelta(days=15 if sid=='cpi_nsa' else 0)))
++    monkeypatch.setattr(panel, 'panel', lambda: pd.DataFrame(rows))
++    cutoff, latest = known_history_end('core_long_history', '1999-12-31', '2000-01-01')
++    assert cutoff == '1999-11-30'
++    assert latest == '1999-12-15'
 diff --git a/research/validate_allocation_holdout.py b/research/validate_allocation_holdout.py
 new file mode 100644
 index 0000000..7709537
@@ -1836,10 +2413,10 @@ index 0000000..7709537
 +    run("--observed" in sys.argv)
 diff --git a/research/validate_followup.py b/research/validate_followup.py
 new file mode 100644
-index 0000000..99e17d2
+index 0000000..a7f9c0b
 --- /dev/null
 +++ b/research/validate_followup.py
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,206 @@
 +"""Reproduce and extend the November 10 employer demonstration.
 +
 +Run with backend/.venv/Scripts/python.exe research/validate_followup.py --stage all.
@@ -1948,7 +2525,7 @@ index 0000000..99e17d2
 +    save(dataset + "_frontier_runs.json", results)
 +
 +
-+def holdout(dataset, end_date="2026-09-30", start_date=None):
++def holdout(dataset, end_date="2026-09-30", start_date=None, respect_publication_lags=False):
 +    """Freeze allocations on pre-split bootstrap paths, score completed post-split historical cohorts."""
 +    from lifecycle.data import panel
 +    from lifecycle.runs import context as C
@@ -1964,8 +2541,13 @@ index 0000000..99e17d2
 +    rows, fitted = [], []
 +    for horizon in (10, 20):
 +        for split in splits:
++            train_end = f"{split - 1}-12-31"
++            latest_publication = None
++            if respect_publication_lags:
++                from calibration_cutoff import known_history_end
++                train_end, latest_publication = known_history_end(universe, train_end, f"{split}-01-01")
 +            train_data = S.StudyData(universe=universe, calibration_start=data_start,
-+                                     calibration_end=f"{split - 1}-12-31")
++                                     calibration_end=train_end)
 +            test_data = S.StudyData(universe=universe, calibration_start=f"{split}-01-01",
 +                                    calibration_end=end_date)
 +            available = len(panel.universe_data(universe, test_data.calibration_start, test_data.calibration_end).real)
@@ -2007,6 +2589,7 @@ index 0000000..99e17d2
 +                                 "age_only_success": float((restricted.first_shortfall < 0).mean()),
 +                                 "n_overlapping_cohorts": len(full.terminal),
 +                                 "train_end": train_data.calibration_end, "test_start": test_data.calibration_start,
++                                 "latest_training_publication": latest_publication,
 +                                 "catalog_hash": panel.catalog_hash()})
 +            fitted.append({"split_year": split, "horizon": horizon, "best_b": bs[best].tolist(),
 +                           "age_only_b": bs[age_only].tolist(), "train_ce": train_ce.tolist()})
@@ -2014,6 +2597,7 @@ index 0000000..99e17d2
 +    pd.DataFrame(rows).to_csv(OUT / f"{dataset}_chronological_holdout.csv", index=False)
 +    save(f"{dataset}_holdout_specs.json", {"ages": ages, "q": qs, "bond_grid": bs.tolist(),
 +          "gamma": 4, "train_paths": 4000, "seed": 20261119, "catalog_hash": panel.catalog_hash(),
++          "respect_recorded_publication_lags": respect_publication_lags,
 +          "cell_weighting": "equal weights over the declared age and signed-flow grid",
 +          "objective": "CRRA certainty equivalent of terminal real wealth plus funded draws, USD 1000 floor",
 +          "inference": "descriptive completed overlapping cohorts, without iid confidence intervals", "fitted": fitted})
@@ -2041,10 +2625,10 @@ index 0000000..99e17d2
 +    main()
 diff --git a/research/validate_wrds_followup.py b/research/validate_wrds_followup.py
 new file mode 100644
-index 0000000..143c676
+index 0000000..9fdfc7a
 --- /dev/null
 +++ b/research/validate_wrds_followup.py
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,73 @@
 +"""Matched-window WRDS source sensitivity and independent allocation validation."""
 +import argparse
 +import json
@@ -2094,7 +2678,8 @@ index 0000000..143c676
 +        from lifecycle.studies.signed_flow import SignedFlowSpec
 +        from lifecycle.studies.permanent import PermanentSpec
 +        from lifecycle.studies.registry import spec_model
-+        signed = SignedFlowSpec(data=S.StudyData(calibration_start="1953-01-01", calibration_end="2024-12-31"),
++        signed = SignedFlowSpec(data=S.StudyData(universe="core_long_history",
++            calibration_start="1953-01-01", calibration_end="2024-12-31"),
 +            scenario=S.StudyScenario(n_paths=5000, n_train_paths=4000, seed=20261119, k_regimes=1), n_boot=300)
 +        records["signed_flow"] = F.execute("signed_flow", signed, "WRDS age and signed cash flow")
 +        records["permanent"] = F.execute("permanent", PermanentSpec(data=S.StudyData(
@@ -2105,7 +2690,7 @@ index 0000000..143c676
 +            "calibration_start": "2007-05-01", "calibration_end": "2024-12-31"})})
 +        records["multi_asset"] = F.execute("multi_asset", multi, "WRDS full multi-asset baseline")
 +        F.save("wrds_extended_runs.json", records)
-+        F.holdout("wrds", end_date="2024-12-31", start_date="1953-05-01")
++        F.holdout("wrds", end_date="2024-12-31", start_date="1953-05-01", respect_publication_lags=True)
 +        import validate_allocation_holdout as A
 +        A.OUT = OUT
 +        A.run(end_date="2024-12-31", dataset_name="wrds")
@@ -2117,12 +2702,79 @@ index 0000000..143c676
 +
 +if __name__ == "__main__":
 +    main()
+diff --git a/research/verify_robustness.py b/research/verify_robustness.py
+new file mode 100644
+index 0000000..651782d
+--- /dev/null
++++ b/research/verify_robustness.py
+@@ -0,0 +1,61 @@
++"""Audit the complete extension and summarize only aggregate research outcomes."""
++import hashlib
++import json
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++
++ROOT = Path(__file__).resolve().parents[1]
++OUT = ROOT / "research/wrds_validation_2026_11_19"
++ROB = OUT / "robustness"
++script_hash = hashlib.sha256((ROOT / "research/robustness_followup.py").read_bytes()).hexdigest()
++previous_hash = hashlib.sha256((ROB / "superseded/analysis_source_before_publication_gate.py").read_bytes()).hexdigest()
++design_hash = hashlib.sha256((ROB / "design.json").read_bytes()).hexdigest()
++for stage, dataset in [("sensitivity", "wrds"), ("nonoverlap", "wrds"), ("nonoverlap", "public"), ("refit", "wrds")]:
++    identity = json.loads((ROB / (stage+"_"+dataset+"_identity.json")).read_text())
++    assert (identity["script_sha256"] == script_hash if stage == "nonoverlap"
++            else identity["script_sha256"] in {script_hash, previous_hash})
++    assert identity["design_sha256"] == design_hash
++scores = pd.read_csv(ROB / "sensitivity_scores.csv")
++assert len(scores) == 305
++config_columns = ["seed", "generator", "requested_block", "cost_half_spread_bps", "bond_step"]
++assert len(scores[config_columns].drop_duplicates()) == 26
++assert np.isfinite(scores.relative_resources_ce).all()
++assert np.allclose(scores[scores.policy.eq("horizon_only")].relative_resources_ce, 0)
++assert scores.selected_alpha.isin([0, .25, .5, .75, 1]).all()
++for dataset in ["wrds", "public"]:
++    table = pd.read_csv(ROB / (dataset+"_nonoverlap.csv"))
++    assert len(table) == 450
++    assert table.groupby(["horizon", "start_year", "q"]).policy.nunique().eq(5).all()
++    assert (pd.to_datetime(table.train_end) < pd.to_datetime(table.start_year.astype(str)+"-01-01")).all()
++    assert (pd.to_datetime(table.latest_training_publication) < pd.to_datetime(table.decision_date)).all()
++    for horizon, expected in [(5, 9), (10, 4), (20, 2)]:
++        spans = table[table.horizon.eq(horizon)][["start_year", "end_year"]].drop_duplicates().sort_values("start_year")
++        assert len(spans) == expected
++        assert np.all(spans.start_year.to_numpy()[1:] > spans.end_year.to_numpy()[:-1])
++refit = pd.read_csv(ROB / "history_refit_scores.csv")
++assert len(refit) == 300 and refit.groupby("policy").iteration.nunique().eq(100).all()
++assert len(pd.read_csv(ROB / "history_refit_allocations.csv")) == 11400
++replacement = json.loads((OUT / "wrds_extended_runs.json").read_text())["signed_flow"]
++new = json.loads((OUT / (replacement["run_id"]+".json")).read_text())
++old = json.loads((OUT / "53b2e84a4b9895ad067a.json").read_text())
++assert new["universe"]["assets"] == ["us_eq", "tbill", "ust_10y"]
++correction = {"superseded_run": "53b2e84a4b9895ad067a", "replacement_run": replacement["run_id"],
++    "previous_universe": old["universe"]["name"], "replacement_universe": new["universe"]["name"],
++    "previous_assets": old["universe"]["assets"], "replacement_assets": new["universe"]["assets"],
++    "previous_automatic_block_months": 18.728263406826386,
++    "replacement_automatic_block_months": 23.639156379715388,
++    "previous_result": old["policies"]["oos_full_vs_age"], "replacement_result": new["policies"]["oos_full_vs_age"],
++    "reason": "Explicitly match the three-asset public universe; unused Treasury maturities affected automatic joint block-length selection"}
++(ROB / "universe_correction.json").write_text(json.dumps(correction, indent=2), encoding="utf-8")
++verification = {"source_identity_and_design_hashes": "4 stages verified",
++    "scenario_configurations": 26, "sensitivity_score_rows": len(scores),
++    "nonoverlap_periods_per_dataset": "9 five-year, 4 ten-year, 2 twenty-year",
++    "historical_policy_flow_outcomes": 900, "training_ends_before_test": True,
++    "history_refits": 100, "refitted_allocation_records": 11400,
++    "analytical_tests": "4 passed: deterministic CRRA, validation rejects noise, ledger conservation, unpublished CPI excluded",
++    "matched_signed_flow_universe": "three assets verified", "raw_vendor_observations_exported": False,
++    "interpretation": "retrospective sensitivity analysis; no claim of independent country or household evidence"}
++(ROB / "verification.json").write_text(json.dumps(verification, indent=2), encoding="utf-8")
++print(json.dumps(verification, indent=2))
 diff --git a/research/verify_wrds_extension.py b/research/verify_wrds_extension.py
 new file mode 100644
-index 0000000..9235add
+index 0000000..226a9c9
 --- /dev/null
 +++ b/research/verify_wrds_extension.py
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,75 @@
 +"""Verify licensed-input integrity and export only aggregate diagnostics."""
 +import hashlib
 +import json
@@ -2174,6 +2826,7 @@ index 0000000..9235add
 +    frame = pd.read_csv(OUT / (dataset + "_chronological_holdout.csv"))
 +    assert len(frame) == 192
 +    assert frame.train_end.lt(frame.test_start).all()
++    assert (pd.to_datetime(frame.latest_training_publication)<pd.to_datetime(frame.test_start)).all()
 +    assert frame.n_overlapping_cohorts.gt(0).all()
 +reproductions = {}
 +for name in ["frontier", "signed_flow"]:
@@ -2181,6 +2834,12 @@ index 0000000..9235add
 +    assert "reproduced " in log and "DIFFER" not in log
 +    if name == "frontier":
 +        assert "reproduced " + run_records[8] in log
++    else:
++        current = json.loads((OUT / "wrds_extended_runs.json").read_text())["signed_flow"]
++        assert current["spec"]["data"]["universe"] == "core_long_history"
++        signed = json.loads((OUT / (current["run_id"] + ".json")).read_text())
++        assert signed["universe"]["assets"] == ["us_eq", "tbill", "ust_10y"]
++        assert "reproduced " + current["run_id"] in log
 +    reproductions[name] = log.splitlines()[-1]
 +verification = {"raw_input_hashes": "4 of 4 verified", "restricted_invalid_return_count": int(bad_returns.sum()),
 +    "nonfinite_values": 0, "duplicate_month_series_rows": 0,

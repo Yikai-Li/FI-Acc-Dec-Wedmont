@@ -81,5 +81,11 @@ in ../wrds_validation_2026_11_19/wrds_validation.html and the accompanying Engli
 12 matched-window frontiers, two exact reproductions, 384 chronological age/flow cells, independent-path
 allocation evaluation and the full 12-sleeve multi-asset universe. Raw WRDS data are excluded from this
 package. The historical training comparisons begin in May 1953 and end in December 2024.
+The updated extension explicitly matches the signed-flow universe to three assets. The earlier 0.61%
+six-asset WRDS estimate is superseded by +0.10% with a paired 95% interval of -0.08% to +0.33%.
+It adds 26 sensitivity configurations, 100 training-history refits and 15 complete nonoverlapping
+periods per dataset (9 five-year, 4 ten-year and 2 twenty-year). Historical training respects the
+recorded CPI publication lag. Four analytical robustness tests passed. These results do not establish
+consistent superiority of the cash-flow-conditional rule over the horizon-only comparator.
 The reviewed sources contain the Zoom invitation and follow-up email. A recording or transcript has yet
 to be located.

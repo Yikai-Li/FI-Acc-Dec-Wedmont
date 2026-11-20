@@ -13,9 +13,15 @@ returns are replaced by CRSP. The latter reaches the 90% target first at 40% bon
 Using all CRSP core inputs over 2002-2024 gives 88.73% at the best tested allocation. The result depends
 on the return source, sample and scenario generator; there is no supported universal bond minimum.
 
-The WRDS age-plus-flow rule gains 0.61% resources CE over age-only on independent simulation paths
-(95% paired interval 0.29% to 1.01%). Historical fold means are positive in 6 of 8 folds, with a
-range of -0.29% to 4.53%. Overlapping cohorts are not independent replications.
+The corrected three-asset WRDS age-plus-flow rule changes resources CE by 0.10% versus age-only
+(95% paired interval -0.08% to 0.33%, including zero). Five simulation seeds give a range
+of -0.09% to 0.19%. The initial six-asset 0.61% estimate is superseded: unused Treasury
+assets changed the automatically fitted block length and prevented a matched comparison.
+
+Only 56% of 100 training-history refits produce a positive CE difference. The central refit range is
+-1.73% to 1.82%; this is sensitivity conditional on a fixed future model, not a
+general confidence interval. Completed nonoverlapping tests contain nine five-year, four ten-year
+and two twenty-year periods per dataset. No consistent superiority of the conditional rule is established.
 At 5% withdrawals, utility and spending-success optimization select 35% and 5% bonds respectively.
 The utility policy gains 9.69% CE and changes success by -1.59 percentage points on independent test paths.
 
@@ -23,9 +29,11 @@ These return-based experiments do not estimate household age effects on risk tol
 
 Completed checks
 
-12 matched-window frontier studies; 384 chronological age/flow cells; four verified extraction hashes;
+12 matched-window frontier studies; 384 earlier chronological age/flow cells; four verified extraction hashes;
 zero invalid restricted returns or duplicate month/series records; exact frontier and signed-flow
-reproduction; 111 backend tests. The earlier frontend checks remain 230 unit tests, 26 browser tests,
+reproduction; 111 backend tests and four analytical robustness tests. The extension adds 26 sensitivity
+configurations, 100 history refits and 900 policy/flow outcomes across 30 complete nonoverlapping periods
+(15 per dataset; horizons share months). The earlier frontend checks remain 230 unit tests, 26 browser tests,
 type-check and production build passed. The existing lint warning and six dependency advisories remain
 documented in the public report. The full 12-sleeve multi-asset study and Permanent Portfolio now run.
 

@@ -1,7 +1,7 @@
 {
   "date": "2026-11-19",
   "starting_commit": "4b0c23ec63f760feb8bcfbaecddd5746921f21d4",
-  "continuation_commit": "41c34a21398ac283e0b74c110eb43315189a9515",
+  "continuation_commit": "c6046a58d20d3bc86ea026af0cbad97123f19edc",
   "engine_semantic_version": "2.3",
   "raw_wrds_data_included": false,
   "inputs": {
@@ -38,8 +38,8 @@
     "figures/matched_success_heatmaps.png": "830707d228e93dc2eea620fb7c7c08bf7a487e5cc4f40be9a93c78c0cdb364b1",
     "figures/minimum_bond_share.png": "acae9dc325d66edb15e73fed6cf9ef0ed01050bfef26185e699b756c6ffa73b8",
     "figures/trained_objective_comparison.png": "0ddda25efaeef4f0c354dd3a840b7e0b232ab83c0cd1a7521eb9696df85e4fb8",
-    "fixed_income_validation.html": "5fb7ef94c55c776c237bbc7b2b9733df71128ad3e480a047bd298a8af62a57d3",
-    "fixed_income_validation.ipynb": "5f0c6d044a6ad0511975b99627429a854fd04270a061e99dfb840a900fe84980",
+    "fixed_income_validation.html": "e278d37c4e901e475c0272f6737e0ace6c3178dd6d1f9a84751b64b067017593",
+    "fixed_income_validation.ipynb": "467c5f575f5a3f4dfa1799cdac75c26f7ad37c6c0088bffc996aaaf073eaf25a",
     "frontier_summary.csv": "a005ca0f5b27a975aea5a73cdcfa30262d954d174010ee2f459cabb8dc7904ae",
     "main_allocation_holdout.json": "61f884aa25e1baab40c4a811251356d0835394a750de56ef99fc356d42e3a3c2",
     "main_chronological_holdout.csv": "be1ac350f0317be2f9d892f47c2ee3fb81bcad5d5eb04dd368820beed62c4bd6",
@@ -55,13 +55,13 @@
     "observed_frontier_runs.json": "43462b273a42132ed553d8d8d381d08fa968bb9fa2da4600bbaa23fff6ab561c",
     "observed_holdout_specs.json": "db1d3ffcaa7fb4a8a04c8e2d9017d96ec39082688500266d3693b1eca46e5474",
     "permanent_portfolio_summary.csv": "8e829fd2ece140f5f3db17fa6d9f54d8c98f9c1c4b3d42e9882b0908e3cebea7",
-    "README.txt": "ede50398376b2e622b11382ddc2d383eb40479359a463185fe707046792daaba",
+    "README.txt": "185ce6af57a1befb1a7a0c0529a6d5986c3fffff24eabd68ae322dcc6b3a0de0",
     "replay_verification.json": "578fc8e3b3e61954496ec3cf39e7f516ee8900c23dc3cbc2a1c7f335cdfb0c07",
     "reproduce_frontier.log": "7535429a2505560c1d6c5f61bf26ea9a3a09819714bdf11b5d50e0b3c2a568ea",
     "reproduce_observed_frontier.log": "26ca4c33b2c29723fecadfe01dd2e68bc27c59faa1961dda45a11d1d4cce1f61",
     "reproduce_signed_flow.log": "39eaf025531ca20fad5a6158270dbc5da0aadeb39dace915d685b366e9839808",
     "snapshot_reproduction.json": "1b3025b3e57efc6b9ea8885520632af8e9c52911359b5b1cde00a502090e7021",
-    "source_changes.patch": "d6a798abbae61c408eb164e147630328de726906b6d48b322638b1abdf24b605",
+    "source_changes.patch": "dae22d31bde4fcd5c7e23541eca368b9f8bd7e1ed199c941e3ec15375465aaed",
     "verification.json": "b993bd8fbc030900e61ee7d51f10dbdc654d85cfe1abdde6484ff75caecd5878",
     "web_e2e.json": "cdd8a9c4c1c07acae7a6b5892f702ecd31ec1ce591b9e6ad8960be7587da0efd"
   }
