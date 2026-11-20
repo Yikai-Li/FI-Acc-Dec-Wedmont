@@ -7,6 +7,14 @@ from lifecycle.studies.frontier import _surface
 from lifecycle.studies.signed_flow import paired_resources_comparison
 
 
+def test_young_investor_horizon_is_not_extended_to_age_70():
+    investor = S.StudyInvestor(age=35, retirement_age=65, horizon_years=10)
+    spec = S.experiment_spec(S.StudyData(universe="core_long_history"),
+                             S.StudyScenario(n_paths=100, n_train_paths=100), investor)
+    assert spec.investor.max_age == 45
+    assert S.get_tensor(spec).n_months == 120
+
+
 def test_frontier_welfare_uses_the_selected_success_horizon():
     investor = S.StudyInvestor(horizon_years=40)
     spec = S.experiment_spec(S.StudyData(universe="core_long_history"),

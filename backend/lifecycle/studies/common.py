@@ -86,7 +86,7 @@ def experiment_spec(data: StudyData, scen: StudyScenario, inv: StudyInvestor, pr
                      "seed": scen.seed if seed is None else seed, "block_length": scen.block_length,
                      "k_regimes": scen.k_regimes},
         "investor": {"start_age": inv.age, "retirement_age": min(max(inv.retirement_age, 40.0), 80.0),
-                     "max_age": max(max_age, 70.0), "initial_wealth": inv.initial_wealth, "income": inv.income,
+                     "max_age": max_age, "initial_wealth": inv.initial_wealth, "income": inv.income,
                      "income_profile": "cgm_college", "pension": inv.pension, "savings_rate": inv.savings_rate,
                      "sex": inv.sex, "mortality": inv.mortality},
         "preferences": {"gamma": pr.gamma, "beta_annual": pr.beta_annual, "c_min": max(pr.util_floor_annual, 1.0)},
