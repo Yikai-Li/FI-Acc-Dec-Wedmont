@@ -15,6 +15,11 @@ def test_young_investor_horizon_is_not_extended_to_age_70():
     assert S.get_tensor(spec).n_months == 120
 
 
+def test_shortfall_cvar_handles_a_large_atom_at_zero():
+    losses = np.r_[np.zeros(990), np.ones(10)]
+    assert np.isclose(S.cvar(losses, 0.95), 0.2)
+
+
 def test_frontier_welfare_uses_the_selected_success_horizon():
     investor = S.StudyInvestor(horizon_years=40)
     spec = S.experiment_spec(S.StudyData(universe="core_long_history"),
