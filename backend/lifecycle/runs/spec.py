@@ -16,7 +16,7 @@ class Frozen(BaseModel):
 
 
 UniverseName = Literal["core", "modern", "core_long_history", "core_duration", "pp_modern_etf", "multi_asset_public", "multi_asset_full",
-                       "pp_research_historical", "liability_match"]
+                       "pp_research_historical", "liability_match", "observed_treasury_etf"]
 
 
 class DataSpec(Frozen):
