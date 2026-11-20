@@ -276,7 +276,7 @@ python -m uv sync --project backend --extra dev --extra wrds --extra workers --f
 backend/.venv/Scripts/python.exe -m lifecycle.cli ingest --offline
 backend/.venv/Scripts/python.exe research/validate_followup.py --stage all
 $env:LIFECYCLE_DATA_DIR='data/validation_etfs'
-backend/.venv/Scripts/python.exe -m lifecycle.data.ingest_public_etfs
+backend/.venv/Scripts/python.exe -m lifecycle.data.ingest_public_etfs --snapshot research/followup_2026_11_19/observed_etf_monthly_returns.csv
 backend/.venv/Scripts/python.exe research/validate_followup.py --stage all --dataset observed
 Remove-Item Env:LIFECYCLE_DATA_DIR
 backend/.venv/Scripts/python.exe research/validate_allocation_holdout.py
@@ -285,7 +285,8 @@ backend/.venv/Scripts/python.exe research/validate_allocation_holdout.py --obser
 
 For a clean rerun, copy `data/raw` and `data/processed` into the corresponding folders under
 `data/validation_etfs` before observed ingestion. An executed notebook accompanies the persisted derived
-results. Raw vendor responses remain local. `validation_manifest.json` records SHA-256 hashes of the report inputs.
+results. Raw daily vendor responses remain local. The frozen monthly return snapshot is included.
+`validation_manifest.json` records SHA-256 hashes of the report inputs.
 
 WRDS ingestion requires an account login and any Duo approval. Employer installation awaits the employer's
 reply and GitHub username. The repository access and local execution steps remain pending that response.

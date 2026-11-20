@@ -10,6 +10,7 @@ data/processed/
 data/cache/
 data/runs/
 data/validation_etfs/
+data/snapshot_restore_check/
 *.parquet
 !snapshots/public/*.parquet
 *.duckdb

@@ -7,6 +7,7 @@ The raw response, retrieval URL and SHA-256 are retained for reproducibility.
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import pandas as pd
@@ -55,5 +56,24 @@ def ingest(cutoff: str = "2026-09-30") -> dict:
     return {"sources": reports, "panel": build_panel()}
 
 
+def ingest_snapshot(path: Path) -> dict:
+    """Restore the frozen monthly return observations used by the delivered report."""
+    frame = pd.read_csv(path, parse_dates=["month_end", "vintage", "available_from"], float_precision="round_trip")
+    if set(frame["series_id"]) != set(FUNDS.values()):
+        raise ValueError("The ETF snapshot must contain exactly IEF and GLD series")
+    for ticker, series_id in FUNDS.items():
+        rows = frame[frame["series_id"] == series_id]
+        if not rows["source"].eq(f"public:yahoo.adjusted_close.{ticker}").all():
+            raise ValueError(f"Unexpected source for {ticker}")
+        write_raw(finalize_rows(rows.to_dict("records")), "public_etfs", ticker)
+    return {"snapshot_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "panel": build_panel()}
+
+
 if __name__ == "__main__":
-    print(json.dumps(ingest(), indent=2, default=str))
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--snapshot", type=Path)
+    args = parser.parse_args()
+    result = ingest_snapshot(args.snapshot) if args.snapshot else ingest()
+    print(json.dumps(result, indent=2, default=str))
