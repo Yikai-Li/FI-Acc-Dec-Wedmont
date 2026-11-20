@@ -39,6 +39,9 @@ def main():
     assert unit['success'] and unit['numPassedTests']==230 and unit['numFailedTests']==0
     shutil.copy2(CLEAN/'frontend_clean_tests.json',OUT/'frontend_clean_tests.json')
     assert (CLEAN/'lifecycle/web/.next/BUILD_ID').exists()
+    install=json.loads((OUT/'one_command_install_verification.json').read_text())
+    assert install['status']=='passed' and install['production_build']=='passed'
+    assert install['studies']['permanent']=='done' or install['studies'].get('permanent_core_duration')=='done'
     audit=json.loads((ROOT/'research/npm_audit_fixed_2026_11_20.json').read_text())
     assert audit['metadata']['vulnerabilities']['total']==0
     shutil.copy2(ROOT/'research/npm_audit_fixed_2026_11_20.json',OUT/'npm_audit_final.json')
@@ -84,6 +87,7 @@ def main():
         clean_numeric_artifacts=reproduction,exact_prior_study_reproduction=exact,
         complete_legacy_demo_re_evaluation={'status':'Completed including forward simulation and all experiments','changed_fields':9,'scope':'Only forward CE and unmet-outlay summaries change; remaining numerical fields agree within recorded tolerance','audit':'engine24_historical_replay_audit.json'},
         production_build='Passed in independently installed frontend',lint='Passed without lint warnings',typecheck='Passed',
+        one_command_windows_install=install,
         npm_audit='0 known advisories at the November 20 registry check; not a guarantee against future advisories',
         executed_notebook={'code_cells':len(code),'error_outputs':0,'standalone_figures':8,'language':'English'},
         pdf_pages=pages,pdf_review='Rendered pages visually checked; no clipping or missing report text',

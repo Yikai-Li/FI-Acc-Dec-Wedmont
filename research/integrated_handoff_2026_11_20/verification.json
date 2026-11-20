@@ -18,8 +18,8 @@
     "failed": 0
   },
   "browser_tests": {
-    "startTime": "2026-11-20T11:56:28.077Z",
-    "duration": 226795.854,
+    "startTime": "2026-11-20T12:18:10.749Z",
+    "duration": 226774.654,
     "expected": 26,
     "skipped": 0,
     "unexpected": 0,
@@ -142,6 +142,31 @@
   "production_build": "Passed in independently installed frontend",
   "lint": "Passed without lint warnings",
   "typecheck": "Passed",
+  "one_command_windows_install": {
+    "status": "passed",
+    "fresh_source_clone": true,
+    "fresh_backend_environment": true,
+    "fresh_node_modules": true,
+    "command": "setup_windows.ps1 -UvPython <existing Python with uv>",
+    "node_version": "v25.2.1",
+    "public_data": "Restored committed snapshot; no external data or credentials copied",
+    "studies": {
+      "frontier": "done",
+      "signed_flow": "done",
+      "rebalance": "done",
+      "scenario_lab": "done",
+      "optimize": "done",
+      "compare_v2": "done",
+      "asof": "done",
+      "permanent": "failed",
+      "permanent_core_duration": "done",
+      "evidence": "done"
+    },
+    "production_build": "passed",
+    "npm_audit_in_install": "0 vulnerabilities",
+    "frontend_tests": "Separate final current-source API/frontend browser acceptance: 26 passed",
+    "note": "UvPython chooses a uv launcher; the backend environment is independently created from the frozen lock"
+  },
   "npm_audit": "0 known advisories at the November 20 registry check; not a guarantee against future advisories",
   "executed_notebook": {
     "code_cells": 12,

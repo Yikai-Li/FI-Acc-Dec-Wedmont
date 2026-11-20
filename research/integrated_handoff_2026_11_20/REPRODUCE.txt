@@ -17,7 +17,7 @@ Public raw household archives and licensed vendor observations are excluded. Off
 URLs and frozen SHA-256 hashes are supplied in the two input manifests. No credentials are required
 for the public analyses or for running the aggregate-only notebook.
 
-Fresh setup (PowerShell, from the unzipped package root; Python 3.12, Node >=20, npm and uv required)
+Fresh setup (PowerShell, from the unzipped package root; Python 3.12, Node 22 or newer, npm and uv required)
   uv sync --project lifecycle/backend --frozen --extra dev
   uv venv .report-env --python 3.12
   uv pip install --python .report-env/Scripts/python.exe -r lifecycle/research/requirements-report-lock.txt
@@ -111,3 +111,14 @@ and remaining numerical fields agree within rtol 1e-10 / atol 1e-9. Read ENGINE2
 The projection/optimization helpers now compile without changing their algorithms. Independent
 analytical/SLSQP tests pass. research/benchmark_replay_helpers.py records a warm helper benchmark,
 which must not be described as a whole-application performance improvement of the same magnitude.
+
+One-command Windows application installation
+From lifecycle/, run .\setup_windows.ps1 after installing uv and Node.js 22 or newer. This exact
+workflow was tested in another fresh clone with freshly installed environments, restored public
+snapshot, regenerated studies and production frontend. An optional -UvPython points to a Python
+interpreter that provides uv as a module. This does not reuse the backend environment. The receipt
+is one_command_install_verification.json and the generated IDs are one_command_public_run_ids.json.
+The default classic Permanent Portfolio cannot run without gold in the public snapshot: the tested
+installer explicitly computes and labels the ex-gold core-duration variant instead. This capability
+boundary is not equivalent to validating a gold-inclusive portfolio with public data. The archive
+contains the source and aggregate WRDS gold results, not the licensed raw gold-proxy observations.
