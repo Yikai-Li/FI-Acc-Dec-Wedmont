@@ -32,7 +32,7 @@
     }
   },
   "dependency_audit": "6 advisories remain (1 high, 4 moderate, 1 low), see npm_audit_after.json",
-  "WRDS": "Approved masters account found; browser login reached mandatory first-time Duo enrollment; awaiting user phone setup",
+  "WRDS": "Completed Duo, explicit Terms of Use acceptance and authenticated Cloud extraction; see WRDS extension for source audits and tests",
   "employer_setup": "awaiting employer reply and GitHub username",
   "recording": "no recording or transcript located in the searched email, Drive and project files",
   "frozen_etf_snapshot": "550 monthly observations restored to identical catalog hash 9c9ac4174cebffdd"

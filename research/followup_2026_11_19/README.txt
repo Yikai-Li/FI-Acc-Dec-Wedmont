@@ -76,7 +76,10 @@ Outstanding external dependencies
 
 The employer has yet to reply with a GitHub username or confirm local installation. The connected account
 has read access to Tanish's repository, so source changes are delivered as a local branch and patch.
-The user's WRDS account was approved on October 19. WRDS ingestion is waiting for first-time Duo
-enrollment, which the user must complete on their phone. Public observed-ETF validation is complete.
+WRDS authentication, Terms of Use acceptance and Cloud extraction are complete. The WRDS extension is
+in ../wrds_validation_2026_11_19/wrds_validation.html and the accompanying English notebook. It adds
+12 matched-window frontiers, two exact reproductions, 384 chronological age/flow cells, independent-path
+allocation evaluation and the full 12-sleeve multi-asset universe. Raw WRDS data are excluded from this
+package. The historical training comparisons begin in May 1953 and end in December 2024.
 The reviewed sources contain the Zoom invitation and follow-up email. A recording or transcript has yet
 to be located.
