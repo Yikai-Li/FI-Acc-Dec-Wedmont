@@ -1,0 +1,1833 @@
+diff --git a/.gitignore b/.gitignore
+index 29234e2..b191b7b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,6 +9,8 @@ data/raw/
+ data/processed/
+ data/cache/
+ data/runs/
++data/validation_etfs/
++data/snapshot_restore_check/
+ *.parquet
+ !snapshots/public/*.parquet
+ *.duckdb
+diff --git a/backend/lifecycle/__init__.py b/backend/lifecycle/__init__.py
+index 0158836..1cc22d3 100644
+--- a/backend/lifecycle/__init__.py
++++ b/backend/lifecycle/__init__.py
+@@ -1,4 +1,4 @@
+ """LIFECYCLE research engine."""
+ 
+-__version__ = "0.2.0"
+-ENGINE_SEMANTIC_VERSION = "2.0"  # bump whenever simulation semantics change; old runs stay immutable
++__version__ = "0.2.3"
++ENGINE_SEMANTIC_VERSION = "2.3"  # exact horizons, paired-path inference and atom-aware tail losses
+diff --git a/backend/lifecycle/cli.py b/backend/lifecycle/cli.py
+index 5c0bfd1..cf74dd1 100644
+--- a/backend/lifecycle/cli.py
++++ b/backend/lifecycle/cli.py
+@@ -202,6 +202,8 @@ def cmd_openapi(args: argparse.Namespace) -> None:
+ 
+ 
+ def main() -> None:
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(errors="backslashreplace")
+     ap = argparse.ArgumentParser(prog="lifecycle")
+     sub = ap.add_subparsers(dest="cmd", required=True)
+     p = sub.add_parser("ingest")
+diff --git a/backend/lifecycle/data/ingest_public_etfs.py b/backend/lifecycle/data/ingest_public_etfs.py
+new file mode 100644
+index 0000000..84c2bcc
+--- /dev/null
++++ b/backend/lifecycle/data/ingest_public_etfs.py
+@@ -0,0 +1,79 @@
++"""Optional observed ETF validation data from Yahoo Finance daily adjusted prices.
++
++IEF remains a distinct 7-10Y ETF series. It never replaces the modelled constant-maturity 10Y bond.
++Only completed months are retained. Daily adjusted closes include distribution/split adjustments.
++The raw response, retrieval URL and SHA-256 are retained for reproducibility.
++"""
++import hashlib
++import json
++from datetime import datetime, timezone
++from pathlib import Path
++
++import httpx
++import pandas as pd
++
++from lifecycle.config import raw_dir
++from lifecycle.data.normalize import build_panel, write_raw
++from lifecycle.data.schema import finalize_rows
++
++FUNDS = {"IEF": "ust_7_10_etf", "GLD": "gold"}
++
++
++def monthly_returns(document: dict, cutoff: str) -> pd.Series:
++    result = document["chart"]["result"][0]
++    dates = pd.to_datetime(result["timestamp"], unit="s", utc=True).tz_convert("America/New_York").tz_localize(None)
++    prices = pd.Series(result["indicators"]["adjclose"][0]["adjclose"], index=dates).dropna()
++    closes = prices.resample("ME").last().loc[:cutoff]
++    # The first partial fund month supplies the initial price, so its return is omitted.
++    return closes.pct_change(fill_method=None).dropna()
++
++
++def ingest(cutoff: str = "2026-09-30") -> dict:
++    reports = []
++    folder = raw_dir() / "yahoo_responses"
++    folder.mkdir(exist_ok=True)
++    for ticker, series_id in FUNDS.items():
++        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
++        response = httpx.get(url, params={"range": "max", "interval": "1d", "events": "div,splits"},
++                             headers={"User-Agent": "Mozilla/5.0"}, timeout=60, follow_redirects=True)
++        response.raise_for_status()
++        document = response.json()
++        values = monthly_returns(document, cutoff)
++        if values.empty or (values <= -1).any():
++            raise ValueError(f"Invalid adjusted-price returns for {ticker}")
++        retrieved = datetime.now(timezone.utc).isoformat()
++        (folder / f"{ticker}.json").write_bytes(response.content)
++        report = {"ticker": ticker, "series_id": series_id, "url": str(response.url),
++                  "retrieved_at": retrieved, "sha256": hashlib.sha256(response.content).hexdigest(),
++                  "first_month": str(values.index[0].date()), "last_month": str(values.index[-1].date()),
++                  "months": len(values), "definition": "monthly change in month-end daily adjusted close"}
++        reports.append(report)
++        rows = [{"month_end": d, "series_id": series_id, "value": v, "quantity": "total_return",
++                 "provenance": "observed", "source": f"public:yahoo.adjusted_close.{ticker}"}
++                for d, v in values.items()]
++        write_raw(finalize_rows(rows), "public_etfs", ticker)
++    (folder / "manifest.json").write_text(json.dumps(reports, indent=2), encoding="utf-8")
++    return {"sources": reports, "panel": build_panel()}
++
++
++def ingest_snapshot(path: Path) -> dict:
++    """Restore the frozen monthly return observations used by the delivered report."""
++    frame = pd.read_csv(path, parse_dates=["month_end", "vintage", "available_from"], float_precision="round_trip")
++    if set(frame["series_id"]) != set(FUNDS.values()):
++        raise ValueError("The ETF snapshot must contain exactly IEF and GLD series")
++    for ticker, series_id in FUNDS.items():
++        rows = frame[frame["series_id"] == series_id]
++        if not rows["source"].eq(f"public:yahoo.adjusted_close.{ticker}").all():
++            raise ValueError(f"Unexpected source for {ticker}")
++        write_raw(finalize_rows(rows.to_dict("records")), "public_etfs", ticker)
++    return {"snapshot_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "panel": build_panel()}
++
++
++if __name__ == "__main__":
++    import argparse
++
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--snapshot", type=Path)
++    args = parser.parse_args()
++    result = ingest_snapshot(args.snapshot) if args.snapshot else ingest()
++    print(json.dumps(result, indent=2, default=str))
+diff --git a/backend/lifecycle/data/series.py b/backend/lifecycle/data/series.py
+index 4d489cf..73f23bd 100644
+--- a/backend/lifecycle/data/series.py
++++ b/backend/lifecycle/data/series.py
+@@ -34,6 +34,9 @@ _add(SeriesDef("ust_5y", "Treasury 5Y", "rates", "total_return", "decimal/month"
+ _add(SeriesDef("ust_10y", "Treasury 10Y", "rates", "total_return", "decimal/month", defensive=True))
+ _add(SeriesDef("ust_20y", "Treasury 20Y", "rates", "total_return", "decimal/month", defensive=True))
+ _add(SeriesDef("ust_30y", "Treasury 30Y", "rates", "total_return", "decimal/month", defensive=True))
++_add(SeriesDef("ust_7_10_etf", "IEF 7-10Y Treasury ETF (adjusted market price)", "rates", "total_return",
++               "decimal/month", defensive=True))
++_add(SeriesDef("ust_20p_etf", "TLT 20+Y Treasury ETF", "rates", "total_return", "decimal/month", defensive=True))
+ _add(SeriesDef("tips", "TIPS", "rates", "total_return", "decimal/month", defensive=True))
+ _add(SeriesDef("ig_credit", "Investment-grade credit", "credit", "total_return", "decimal/month"))
+ _add(SeriesDef("hy_credit", "High-yield credit (observed fund total return, e.g. HYG via WRDS CRSP)", "credit",
+@@ -82,6 +85,10 @@ class UniverseDef:
+ 
+ 
+ UNIVERSES: dict[str, UniverseDef] = {
++    "observed_treasury_etf": UniverseDef(
++        "observed_treasury_etf", "US equity, T-bills and observed IEF Treasury ETF returns",
++        required=("us_eq", "tbill", "ust_7_10_etf"),
++    ),
+     # v2 universes (brief 4.4): explicit, non-overlapping definitions; nothing is spliced or back-filled
+     "core_long_history": UniverseDef(
+         "core_long_history", "Long-history core (US equity, T-bills, 10Y Treasury)",
+diff --git a/backend/lifecycle/engine/lifecycle/utility.py b/backend/lifecycle/engine/lifecycle/utility.py
+index f8972a3..bf6f86f 100644
+--- a/backend/lifecycle/engine/lifecycle/utility.py
++++ b/backend/lifecycle/engine/lifecycle/utility.py
+@@ -46,11 +46,11 @@ def paired_delta_ce(u_a: NDArray[np.float64], u_b: NDArray[np.float64], gamma: f
+         return float("nan"), float("nan")
+     delta = ce_a / ce_b - 1.0
+     ga = dce_du(ce_a, ma, gamma, sum_disc) / ce_b
+-    gb = -ce_a / ce_b ** 2 * dce_du(ce_b, mb, gamma, sum_disc)
++    gb = -(ce_a / ce_b) * (dce_du(ce_b, mb, gamma, sum_disc) / ce_b)
+     if n < 2:
+         return float(delta), 0.0
+-    cov = np.cov(np.vstack([u_a, u_b]))
+-    var = ga * ga * cov[0, 0] + gb * gb * cov[1, 1] + 2 * ga * gb * cov[0, 1]
++    influence = ga * (u_a - ma) + gb * (u_b - mb)
++    var = np.var(influence, ddof=1)
+     return float(delta), float(np.sqrt(max(var, 0.0) / n))
+ 
+ 
+diff --git a/backend/lifecycle/runs/executor.py b/backend/lifecycle/runs/executor.py
+index 35d4f15..2a8e63f 100644
+--- a/backend/lifecycle/runs/executor.py
++++ b/backend/lifecycle/runs/executor.py
+@@ -85,6 +85,8 @@ def with_catalog(spec: BaseModel) -> BaseModel:
+     data = getattr(spec, "data", None)
+     if data is not None and hasattr(data, "catalog_hash"):
+         return spec.model_copy(update={"data": data.model_copy(update={"catalog_hash": chash})})
++    if "catalog_hash" in type(spec).model_fields:
++        return spec.model_copy(update={"catalog_hash": chash})
+     return spec
+ 
+ 
+diff --git a/backend/lifecycle/runs/hashing.py b/backend/lifecycle/runs/hashing.py
+index 3316bc4..9bf36d3 100644
+--- a/backend/lifecycle/runs/hashing.py
++++ b/backend/lifecycle/runs/hashing.py
+@@ -21,5 +21,7 @@ def spec_hash(obj: Any) -> str:
+ 
+ 
+ def run_id_for(kind: str, obj: Any) -> str:
+-    """Run ID = SHA-256 of kind + canonical spec (first 20 hex chars keep URLs short)."""
+-    return sha256_hex(kind + ":" + canonical_json(obj))[:20]
++    """Include the scientific engine version so corrected calculations get distinct runs."""
++    from lifecycle import ENGINE_SEMANTIC_VERSION
++
++    return sha256_hex(ENGINE_SEMANTIC_VERSION + ":" + kind + ":" + canonical_json(obj))[:20]
+diff --git a/backend/lifecycle/runs/spec.py b/backend/lifecycle/runs/spec.py
+index 09d3a03..501b890 100644
+--- a/backend/lifecycle/runs/spec.py
++++ b/backend/lifecycle/runs/spec.py
+@@ -1,7 +1,7 @@
+ """Frozen, hashable experiment specification (brief 7.3). Its canonical-JSON SHA-256 is the run ID."""
+ from typing import Any, Literal
+ 
+-from pydantic import BaseModel, ConfigDict, Field
++from pydantic import BaseModel, ConfigDict, Field, model_validator
+ 
+ Generator = Literal["historical", "bootstrap", "student_t", "markov_switching", "curve_factor"]
+ PolicyType = Literal["constant_mix", "sixty_forty", "target_date", "glidepath", "risk_parity", "min_variance",
+@@ -16,7 +16,7 @@ class Frozen(BaseModel):
+ 
+ 
+ UniverseName = Literal["core", "modern", "core_long_history", "core_duration", "pp_modern_etf", "multi_asset_public", "multi_asset_full",
+-                       "pp_research_historical", "liability_match"]
++                       "pp_research_historical", "liability_match", "observed_treasury_etf"]
+ 
+ 
+ class DataSpec(Frozen):
+@@ -41,7 +41,7 @@ class ScenarioSpec(Frozen):
+ class InvestorSpec(Frozen):
+     start_age: float = Field(65.0, ge=20, le=95)
+     retirement_age: float = Field(65.0, ge=40, le=80)
+-    max_age: float = Field(100.0, ge=70, le=110)
++    max_age: float = Field(100.0, ge=20, le=110)
+     initial_wealth: float = Field(1_000_000.0, ge=0)
+     income: float = Field(100_000.0, ge=0)
+     income_profile: Literal["flat", "cgm_college", "cgm_highschool"] = "cgm_college"
+@@ -54,6 +54,12 @@ class InvestorSpec(Frozen):
+     sex: Literal["male", "female", "unisex"] = "unisex"
+     mortality: bool = True
+ 
++    @model_validator(mode="after")
++    def positive_horizon(self):
++        if self.max_age <= self.start_age:
++            raise ValueError("max_age must exceed start_age")
++        return self
++
+ 
+ class PreferencesSpec(Frozen):
+     gamma: float = Field(4.0, ge=0.5, le=15)
+diff --git a/backend/lifecycle/studies/common.py b/backend/lifecycle/studies/common.py
+index 574ed2d..26e822e 100644
+--- a/backend/lifecycle/studies/common.py
++++ b/backend/lifecycle/studies/common.py
+@@ -86,7 +86,7 @@ def experiment_spec(data: StudyData, scen: StudyScenario, inv: StudyInvestor, pr
+                      "seed": scen.seed if seed is None else seed, "block_length": scen.block_length,
+                      "k_regimes": scen.k_regimes},
+         "investor": {"start_age": inv.age, "retirement_age": min(max(inv.retirement_age, 40.0), 80.0),
+-                     "max_age": max(max_age, 70.0), "initial_wealth": inv.initial_wealth, "income": inv.income,
++                     "max_age": max_age, "initial_wealth": inv.initial_wealth, "income": inv.income,
+                      "income_profile": "cgm_college", "pension": inv.pension, "savings_rate": inv.savings_rate,
+                      "sex": inv.sex, "mortality": inv.mortality},
+         "preferences": {"gamma": pr.gamma, "beta_annual": pr.beta_annual, "c_min": max(pr.util_floor_annual, 1.0)},
+@@ -295,9 +295,16 @@ def paired_success_diff(a: NDArray[np.bool_], b: NDArray[np.bool_]) -> dict[str,
+ def cvar(x: NDArray[np.float64], alpha: float = 0.95) -> float:
+     if len(x) == 0:
+         return float("nan")
+-    q = np.quantile(x, alpha)
+-    tail = x[x >= q]
+-    return float(tail.mean()) if len(tail) else float(q)
++    if not 0 <= alpha < 1:
++        raise ValueError("alpha must be in [0, 1)")
++    ordered = np.sort(x)[::-1]
++    mass = (1 - alpha) * len(ordered)
++    whole = int(np.floor(mass))
++    fractional = mass - whole
++    total = float(ordered[:whole].sum())
++    if fractional > 0 and whole < len(ordered):
++        total += fractional * ordered[whole]
++    return float(total / mass)
+ 
+ 
+ def severity_block(out: ledger.LedgerOutput, n_sample: int = 0, seed: int = 3) -> dict[str, Any]:
+diff --git a/backend/lifecycle/studies/evidence.py b/backend/lifecycle/studies/evidence.py
+index 0845d8f..a912fc9 100644
+--- a/backend/lifecycle/studies/evidence.py
++++ b/backend/lifecycle/studies/evidence.py
+@@ -94,9 +94,13 @@ def hypothesis_table(explicit: dict[str, str]) -> list[dict[str, Any]]:
+         rows.append(_row("H1-v2"))
+     # H2: q-aware (full) vs age-only OOS CE
+     if sf:
+-        m = -sf["policies"]["oos_mean_delta"]["age_only"]
+-        lo, hi = sf["policies"]["oos_delta_ci"]["age_only"]
+-        lo, hi = -hi, -lo
++        comparison = sf["policies"].get("oos_full_vs_age")
++        if comparison is not None:
++            m, lo, hi = comparison["delta"], comparison["lo"], comparison["hi"]
++        else:
++            m = -sf["policies"]["oos_mean_delta"]["age_only"]
++            lo, hi = sf["policies"]["oos_delta_ci"]["age_only"]
++            lo, hi = -hi, -lo
+         v = "supported" if lo > 0.001 else ("contradicted" if hi < 0 else "fragile")
+         rows.append(_row("H2-v2", m, lo, hi, v, sid, q(sf), "OOS dCE of the cell-optimal (age+q) policy over the age-only policy",
+                          _dims(monte_carlo="pass", oos="pass", source_quality=src(sf))))
+diff --git a/backend/lifecycle/studies/frontier.py b/backend/lifecycle/studies/frontier.py
+index e198a07..b48b6bd 100644
+--- a/backend/lifecycle/studies/frontier.py
++++ b/backend/lifecycle/studies/frontier.py
+@@ -69,7 +69,7 @@ def solve_bmin(p: np.ndarray, bs: list[float], target: float) -> dict[str, Any]:
+ 
+ 
+ def _surface(ctx, assets, eq, bd, rs, bs, tr, horizons, keep_first: bool, util_floor: float,
+-             cov=None, gamma=None, progress=None, lo=0.0, hi=1.0):
++             cov=None, gamma=None, progress=None, lo=0.0, hi=1.0, ce_horizon=None):
+     nb, nr = len(bs), len(rs)
+     P = np.zeros((len(horizons), nb, nr))
+     CE = np.zeros((nb, nr))
+@@ -89,14 +89,18 @@ def _surface(ctx, assets, eq, bd, rs, bs, tr, horizons, keep_first: bool, util_f
+             out = S.run(ctx, w, tr, rate=r, util_floor=util_floor, gamma=g, cov=cov)
+             for hi_, h in enumerate(horizons):
+                 P[hi_, bi, ri] = S.success(out.first_shortfall, h * 12).mean()
+-            ceb = S.ce_block(out, g)
++            welfare = out
++            if ce_horizon is not None and ce_horizon * 12 < ctx.tensor.n_months:
++                welfare = S.run(ctx, w, tr, rate=r, util_floor=util_floor, gamma=g, cov=cov,
++                                tensor=ctx.tensor.head(ce_horizon * 12))
++            ceb = S.ce_block(welfare, g)
+             CE[bi, ri], CE_SE[bi, ri] = ceb["ce"], ceb["se"]
+-            UNMET[bi, ri] = out.unmet.mean()
+-            CVAR[bi, ri] = S.cvar(out.unmet, 0.95)
++            UNMET[bi, ri] = welfare.unmet.mean()
++            CVAR[bi, ri] = S.cvar(welfare.unmet, 0.95)
+             UD[bi, ri] = S.until_death_success(out.first_shortfall, ctx.survival)
+             if keep_first:
+                 firsts[(bi, ri)] = out.first_shortfall.astype(np.int32)
+-                utils[(bi, ri)] = out.utility
++                utils[(bi, ri)] = welfare.utility
+             k += 1
+             if progress is not None and k % 25 == 0:
+                 progress("simulating", lo + (hi - lo) * k / (nb * nr))
+@@ -120,7 +124,8 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+     tr = S.strategy(spec.rebalancer, spec.costs)
+     uf = spec.preferences.util_floor_annual
+     P, CE, CE_SE, UNMET, CVAR, UD, firsts, utils = _surface(ctx, assets, spec.equity, spec.bond, rs, bs, tr,
+-                                                            horizons, True, uf, progress=progress, lo=0.05, hi=0.55)
++                                                            horizons, True, uf, progress=progress, lo=0.05, hi=0.55,
++                                                            ce_horizon=spec.main_horizon)
+     N = ten.n_paths
+     iid = ten.meta.get("generator") != "historical"
+     hidx = {h: i for i, h in enumerate(horizons)}
+@@ -240,7 +245,8 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+     spectrum = []
+     eq_only = np.zeros(len(assets))
+     eq_only[assets.index(spec.equity)] = 1.0
+-    base_runs = {r: S.run(ctx, eq_only, tr, rate=r, util_floor=uf) for r in rs[::4]}
++    comparison_tensor = ctx.tensor.head(spec.main_horizon * 12)
++    base_runs = {r: S.run(ctx, eq_only, tr, rate=r, util_floor=uf, tensor=comparison_tensor) for r in rs[::4]}
+     for bond in spec.bond_assets:
+         if bond not in assets:
+             spectrum.append({"bond": bond, "available": False})
+@@ -249,7 +255,7 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+         for r, base in base_runs.items():
+             w = eq_only * 0.6
+             w[assets.index(bond)] += 0.4
+-            out = S.run(ctx, w, tr, rate=r, util_floor=uf)
++            out = S.run(ctx, w, tr, rate=r, util_floor=uf, tensor=comparison_tensor)
+             row["r"].append(r)
+             row["d_success"].append(float(S.success(out.first_shortfall, spec.main_horizon * 12).mean() -
+                                           S.success(base.first_shortfall, spec.main_horizon * 12).mean()))
+@@ -311,7 +317,7 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+     ri5 = min(range(len(rs)), key=lambda i: abs(rs[i] - 0.05))
+     for g in spec.gammas:
+         _, CEg, *_ = _surface(ctx, assets, spec.equity, spec.bond, [rs[ri5]], bs_c, tr, (spec.main_horizon,), False,
+-                              uf, gamma=g)
++                              uf, gamma=g, ce_horizon=spec.main_horizon)
+         gamma_rows.append({"gamma": g, "b_ce": bs_c[int(np.argmax(CEg[:, 0]))]})
+         forest.append({"dimension": "gamma (CE-optimal b)", "label": "gamma=%g" % g,
+                        "b_min": bs_c[int(np.argmax(CEg[:, 0]))], "status": "ce_optimum", "lo": None, "hi": None})
+@@ -322,11 +328,12 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+     phases = []
+     for h in horizons:
+         key = "%d|%.2f" % (h, mt)
++        _, phase_ce, *_ = _surface(ctx, assets, spec.equity, spec.bond, [0.04], bs, tr, (h,), False,
++                                   uf, ce_horizon=h)
+         for row, brow in zip(thresholds[key], boot.get(key, [{}] * len(rs))):
+             if abs(row["r"] - 0.04) < 1e-9:
+-                ri4 = rs.index(row["r"])
+                 phases.append({"horizon_years": h, "feasible_intervals": row["intervals"], "b_min": row["b_min"],
+-                               "b_min_ci": [brow.get("q05"), brow.get("q95")], "b_ce": bs[int(np.argmax(CE[:, ri4]))],
++                               "b_min_ci": [brow.get("q05"), brow.get("q95")], "b_ce": bs[int(np.argmax(phase_ce[:, 0]))],
+                                "status": row["status"]})
+ 
+     progress("summarising", 0.95)
+@@ -335,7 +342,8 @@ def run_frontier(spec: FrontierSpec, progress: S.Progress) -> dict[str, Any]:
+         pass
+     return {
+         "kind": "frontier", "r": rs, "b": bs, "horizons": list(horizons), "targets": list(spec.targets),
+-        "main_horizon": spec.main_horizon, "main_target": mt, "bond": spec.bond, "equity": spec.equity,
++        "main_horizon": spec.main_horizon, "ce_horizon_years": spec.main_horizon,
++        "main_target": mt, "bond": spec.bond, "equity": spec.equity,
+         "rebalancer": spec.rebalancer,
+         "p_success": {str(h): S.to_list(P[hidx[h]]) for h in horizons},
+         "p_lo": {str(h): S.to_list(lo[hidx[h]]) for h in horizons},
+diff --git a/backend/lifecycle/studies/historical_replay.py b/backend/lifecycle/studies/historical_replay.py
+index 8947561..feda6cc 100644
+--- a/backend/lifecycle/studies/historical_replay.py
++++ b/backend/lifecycle/studies/historical_replay.py
+@@ -86,6 +86,7 @@ class ReplayRebalance(S.Frozen):
+ 
+ 
+ class HistoricalReplaySpec(S.Frozen):
++    catalog_hash: str | None = None
+     start: str = "2007-01"
+     end: str | None = None                                  # None = latest month with every needed observation
+     universe_mode: str = Field("fixed", pattern="^(fixed|expanding)$")
+diff --git a/backend/lifecycle/studies/lifecycle_sim.py b/backend/lifecycle/studies/lifecycle_sim.py
+index 435dbdb..fd341ad 100644
+--- a/backend/lifecycle/studies/lifecycle_sim.py
++++ b/backend/lifecycle/studies/lifecycle_sim.py
+@@ -25,6 +25,7 @@ from lifecycle.studies import historical_replay as H
+ 
+ 
+ class LifecycleSimSpec(S.Frozen):
++    catalog_hash: str | None = None
+     start: str = "2007-01"
+     scenario_source: str = Field("simulated_from_start", pattern="^(simulated_from_start|history_then_simulated)$")
+     investor: H.ReplayInvestor = Field(default_factory=H.ReplayInvestor)
+diff --git a/backend/lifecycle/studies/signed_flow.py b/backend/lifecycle/studies/signed_flow.py
+index 2a68d19..e30f7b7 100644
+--- a/backend/lifecycle/studies/signed_flow.py
++++ b/backend/lifecycle/studies/signed_flow.py
+@@ -63,6 +63,33 @@ def _real_rate(spec: SignedFlowSpec) -> tuple[float, str]:
+         return 0.015, "fallback 1.5% (no real curve in panel)"
+ 
+ 
++def paired_resources_comparison(candidate, reference, gamma, n_boot=200, seed=20261119):
++    """Equal-weight cell-average relative CE, resampling paired paths across all cells.
++
++    Arrays have shape (cells, paths). Intervals condition on the fitted policies and model.
++    """
++    candidate = np.maximum(np.asarray(candidate, dtype=float), 1000.0) / 1e6
++    reference = np.maximum(np.asarray(reference, dtype=float), 1000.0) / 1e6
++    if candidate.shape != reference.shape or candidate.ndim != 2:
++        raise ValueError("paired resource arrays must have identical (cells, paths) shapes")
++    transformed_a = np.log(candidate) if gamma == 1 else candidate ** (1 - gamma)
++    transformed_b = np.log(reference) if gamma == 1 else reference ** (1 - gamma)
++
++    def relative(a, b):
++        return np.expm1(a - b) if gamma == 1 else (a / b) ** (1 / (1 - gamma)) - 1
++
++    point = float(relative(transformed_a.mean(axis=1), transformed_b.mean(axis=1)).mean())
++    rng = np.random.default_rng(seed)
++    estimates = []
++    for _ in range(n_boot):
++        idx = rng.integers(0, candidate.shape[1], candidate.shape[1])
++        estimates.append(float(relative(transformed_a[:, idx].mean(axis=1),
++                                        transformed_b[:, idx].mean(axis=1)).mean()))
++    lo, hi = np.quantile(estimates, [0.025, 0.975]) if estimates else (np.nan, np.nan)
++    return {"delta": point, "lo": float(lo), "hi": float(hi), "n_boot": n_boot,
++            "method": "paired test-path percentile bootstrap across all cells; fitted policies fixed"}
++
++
+ def run_signed_flow(spec: SignedFlowSpec, progress: S.Progress) -> dict[str, Any]:
+     u = S.universe_or_raise(spec.data)
+     if spec.bond not in u.assets:
+@@ -78,6 +105,7 @@ def run_signed_flow(spec: SignedFlowSpec, progress: S.Progress) -> dict[str, Any
+     SV_tr = np.zeros((nA, nQ, nB))
+     SV_te = np.zeros((nA, nQ, nB))
+     res_paths: dict[tuple[int, int, int], np.ndarray] = {}
++    test_resources: dict[tuple[int, int, int], np.ndarray] = {}
+     surv_paths: dict[tuple[int, int, int], np.ndarray] = {}
+     horizons = []
+     k = 0
+@@ -99,6 +127,7 @@ def run_signed_flow(spec: SignedFlowSpec, progress: S.Progress) -> dict[str, Any
+                 SV_tr[ai, qi, bi] = float((o_tr.first_shortfall < 0).mean())
+                 SV_te[ai, qi, bi] = float((o_te.first_shortfall < 0).mean())
+                 res_paths[(ai, qi, bi)] = np.maximum(o_tr.terminal + o_tr.funded, 1000.0) / 1e6
++                test_resources[(ai, qi, bi)] = o_te.terminal + o_te.funded
+                 surv_paths[(ai, qi, bi)] = o_tr.first_shortfall < 0
+                 k += 1
+                 if k % 40 == 0:
+@@ -121,6 +150,19 @@ def run_signed_flow(spec: SignedFlowSpec, progress: S.Progress) -> dict[str, Any
+     d_age = oos(lambda a, q: b_age[a])
+     d_q = oos(lambda a, q: b_q[q])
+     d_td = oos(lambda a, q: nearest(td[a]))
++    full_resources = np.stack([test_resources[(a, q, bs.index(b_ce[a, q]))]
++                               for a in range(nA) for q in range(nQ)])
++    age_resources = np.stack([test_resources[(a, q, bs.index(b_age[a]))]
++                              for a in range(nA) for q in range(nQ)])
++    comparisons = {}
++    for name, pick in (("age_only", lambda a, q: b_age[a]), ("q_only", lambda a, q: b_q[q]),
++                       ("target_date", lambda a, q: nearest(td[a]))):
++        resources = np.stack([test_resources[(a, q, bs.index(pick(a, q)))]
++                              for a in range(nA) for q in range(nQ)])
++        comparisons[name] = paired_resources_comparison(resources, full_resources, gamma,
++                                                        spec.n_boot, spec.scenario.seed + 17)
++    full_vs_age = paired_resources_comparison(full_resources, age_resources, gamma,
++                                               spec.n_boot, spec.scenario.seed + 17)
+     # marginal slopes d b*/d q at fixed age: OLS over the q grid, path-bootstrap CI
+     progress("uncertainty", 0.65)
+     qa = np.array(qs)
+@@ -182,9 +224,9 @@ def run_signed_flow(spec: SignedFlowSpec, progress: S.Progress) -> dict[str, Any
+                                            "target_date": S.to_list(d_td)},
+                      "oos_mean_delta": {"age_only": float(np.mean(d_age)), "q_only": float(np.mean(d_q)),
+                                         "target_date": float(np.mean(d_td))},
+-                     "oos_delta_ci": {n: [float(np.mean(m) - 1.96 * np.std(m) / np.sqrt(m.size)),
+-                                          float(np.mean(m) + 1.96 * np.std(m) / np.sqrt(m.size))]
+-                                      for n, m in (("age_only", d_age), ("q_only", d_q), ("target_date", d_td))},
++                     "oos_delta_ci": {n: [v["lo"], v["hi"]] for n, v in comparisons.items()},
++                     "oos_full_vs_age": full_vs_age,
++                     "oos_ci_method": "paired test-path bootstrap; conditional on fitted policies and model",
+                      "note": "restricted policies are fitted on training paths and scored on disjoint test paths "
+                              "relative to the cell-optimal (full) policy; negative = welfare loss"},
+         "slopes": slopes, "funded_ratio": S.to_list(funded_ratio, 4),
+diff --git a/backend/tests/test_followup_regressions.py b/backend/tests/test_followup_regressions.py
+new file mode 100644
+index 0000000..a8efa37
+--- /dev/null
++++ b/backend/tests/test_followup_regressions.py
+@@ -0,0 +1,65 @@
++import numpy as np
++
++from lifecycle import ENGINE_SEMANTIC_VERSION
++from lifecycle.runs import hashing
++from lifecycle.studies import common as S
++from lifecycle.studies.frontier import _surface
++from lifecycle.studies.signed_flow import paired_resources_comparison
++
++
++def test_young_investor_horizon_is_not_extended_to_age_70():
++    investor = S.StudyInvestor(age=35, retirement_age=65, horizon_years=10)
++    spec = S.experiment_spec(S.StudyData(universe="core_long_history"),
++                             S.StudyScenario(n_paths=100, n_train_paths=100), investor)
++    assert spec.investor.max_age == 45
++    assert S.get_tensor(spec).n_months == 120
++
++
++def test_shortfall_cvar_handles_a_large_atom_at_zero():
++    losses = np.r_[np.zeros(990), np.ones(10)]
++    assert np.isclose(S.cvar(losses, 0.95), 0.2)
++
++
++def test_dated_studies_change_identity_when_the_data_change(monkeypatch):
++    from lifecycle.data import panel
++    from lifecycle.runs import executor
++    from lifecycle.studies.historical_replay import HistoricalReplaySpec
++    from lifecycle.studies.lifecycle_sim import LifecycleSimSpec
++
++    for kind, spec in (("historical_replay", HistoricalReplaySpec()), ("lifecycle_sim", LifecycleSimSpec())):
++        monkeypatch.setattr(panel, "catalog_hash", lambda: "first-vintage")
++        before = hashing.run_id_for(kind, executor.with_catalog(spec))
++        monkeypatch.setattr(panel, "catalog_hash", lambda: "second-vintage")
++        after = hashing.run_id_for(kind, executor.with_catalog(spec))
++        assert before != after
++
++
++def test_frontier_welfare_uses_the_selected_success_horizon():
++    investor = S.StudyInvestor(horizon_years=40)
++    spec = S.experiment_spec(S.StudyData(universe="core_long_history"),
++                             S.StudyScenario(n_paths=100, n_train_paths=100), investor)
++    tensor = S.get_tensor(spec)
++    context = S.get_context(spec, tensor, spec.scenario.seed)
++    trading = S.strategy("calendar_12m")
++    result = _surface(context, tensor.assets, "us_eq", "ust_10y", [0.04], [0.4], trading,
++                      (30, 40), True, 3000, ce_horizon=30)
++    weights = S.weights_vector({"us_eq": 0.6, "ust_10y": 0.4}, tensor.assets)
++    direct = S.run(context, weights, trading, rate=0.04, tensor=tensor.head(360))
++    assert np.isclose(result[1][0, 0], S.ce_of(direct, 4))
++    assert np.isclose(result[0][0, 0, 0], S.success(direct.first_shortfall, 360).mean())
++
++
++def test_paired_resource_interval_keeps_common_paths_together():
++    values = np.random.default_rng(2).lognormal(13, 0.8, (4, 150))
++    identical = paired_resources_comparison(values, values, 4, n_boot=30)
++    assert identical["delta"] == identical["lo"] == identical["hi"] == 0
++    scaled = paired_resources_comparison(values * 1.1, values, 4, n_boot=30)
++    assert np.allclose([scaled["delta"], scaled["lo"], scaled["hi"]], 0.1)
++
++
++def test_engine_correction_changes_run_identity(monkeypatch):
++    import lifecycle
++
++    current = hashing.run_id_for("frontier", {"same": "inputs"})
++    monkeypatch.setattr(lifecycle, "ENGINE_SEMANTIC_VERSION", ENGINE_SEMANTIC_VERSION + ".previous")
++    assert hashing.run_id_for("frontier", {"same": "inputs"}) != current
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 13bacca..8fe4125 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -5,6 +5,28 @@ public data, then optionally adds WRDS. Every step was run end to end on Linux (
+ 
+ ## 0. Requirements
+ 
++### Windows PowerShell
++
++The validated Windows path uses Python 3.12 and the locked backend dependencies. From the repository root,
++run `python -m pip install uv`, then the following commands.
++
++```powershell
++$env:PYTHONUTF8='1'
++python -m uv sync --project backend --extra dev --extra wrds --extra workers --frozen
++backend/.venv/Scripts/python.exe -m lifecycle.cli ingest --offline
++backend/.venv/Scripts/python.exe -m lifecycle.cli seed-v2
++Push-Location web
++npm.cmd ci
++npm.cmd run build
++Pop-Location
++```
++
++Start the API with `backend/.venv/Scripts/python.exe -m uvicorn lifecycle.api.main:app --host 127.0.0.1 --port 8000`.
++In another terminal, run `npm.cmd run start --prefix web`. The browser entry point is `http://localhost:3000`.
++
++The November 19 validation notebook lives at `research/followup_2026_11_19/fixed_income_validation.ipynb`.
++Its input files and `validation_manifest.json` record the run IDs, specifications and data hashes used.
++
+ | Tool | Version | Notes |
+ |---|---|---|
+ | Python | 3.12 (exactly; `requires-python = ">=3.12,<3.13"`) | |
+diff --git a/research/build_followup_notebook.py b/research/build_followup_notebook.py
+new file mode 100644
+index 0000000..6c75b5b
+--- /dev/null
++++ b/research/build_followup_notebook.py
+@@ -0,0 +1,316 @@
++"""Build the English employer notebook from persisted, reproducible study outputs."""
++from pathlib import Path
++
++import nbformat as nbf
++
++ROOT = Path(__file__).resolve().parents[1]
++OUT = ROOT / "research" / "followup_2026_11_19"
++cells = []
++
++
++def md(source):
++    cells.append(nbf.v4.new_markdown_cell(source))
++
++
++def code(source):
++    cells.append(nbf.v4.new_code_cell(source))
++
++
++md("""# Fixed-income allocation under withdrawals
++## Reproduction, measurement corrections and external validation
++
++**November 19, 2026 · Columbia University / Wedmont project**
++
++This report starts from Tanish's November 10 employer demonstration and the source at
++`4b0c23ec63f760feb8bcfbaecddd5746921f21d4`. It evaluates three questions.
++
++1. At each initial real withdrawal rate, what bond allocation meets a specified spending-success target?
++2. How do the answers change with observed Treasury ETF returns and historical estimation windows?
++3. Does an allocation fitted to both age and planned cash flows outperform an age-only allocation in later historical data?
++
++The comparisons use the existing monthly holdings ledger, with explicit contributions, funded withdrawals,
++rebalancing and trading costs. Results and dataset definitions are linked to their run records.
++[Original source](https://github.com/tanishpatel0106/FI-Acc-Dec-Wedmont/tree/4b0c23ec63f760feb8bcfbaecddd5746921f21d4)
++""")
++code('''from pathlib import Path
++import hashlib
++import json
++import sys
++import numpy as np
++import pandas as pd
++import matplotlib.pyplot as plt
++from IPython.display import display, Markdown
++
++ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'backend' / 'lifecycle').exists())
++OUT = ROOT / 'research' / 'followup_2026_11_19'
++FIGURES = OUT / 'figures'
++FIGURES.mkdir(exist_ok=True)
++def read(name):
++    return json.loads((OUT / name).read_text(encoding='utf-8'))
++def results(record):
++    return read(record['run_id'] + '.json')
++main = read('main_runs.json')
++model = read('main_frontier_runs.json')
++observed = read('observed_frontier_runs.json')
++plt.rcParams.update({'figure.dpi': 130, 'axes.spines.top': False,
++                     'axes.spines.right': False, 'font.size': 10})
++def export(name):
++    plt.savefig(FIGURES / (name + '.png'), dpi=180, bbox_inches='tight')
++    plt.show()
++''')
++md("""## Data selection and provenance
++
++The long-history panel contains US equity returns, T-bills and Treasury returns reconstructed from yields.
++Its purpose is to evaluate long retirement horizons. The separate validation panel adds observed IEF ETF
++returns and GLD gold-fund returns. IEF targets Treasury maturities of seven to ten years, which makes it a
++practical comparison for the modelled ten-year Treasury sleeve. The matched comparison uses the same equity,
++inflation, cash, start month and end month across both bond sources.
++
++ETF returns are computed as the percentage change in month-end daily adjusted closes. The raw responses,
++retrieval URLs and SHA-256 hashes are retained. The final month is September 2026 to match the original public
++snapshot. The first price month supplies the starting price and contributes no return observation.
++
++Thirty-year ETF simulations resample a shorter observed history. Completed historical holdouts use only
++cohorts that fit within the available data. The classic Permanent Portfolio experiment combines observed GLD
++with the original Treasury sleeve, whose return reconstruction remains explicit.
++[IEF issuer documentation](https://www.ishares.com/us/products/239456/ishares-710-year-treasury-bond-etf) ·
++[Federal Reserve yield-curve research](https://www.federalreserve.gov/econres/feds/the-us-treasury-yield-curve-1961-to-the-present.htm) ·
++[Original data pipeline](https://github.com/tanishpatel0106/FI-Acc-Dec-Wedmont/tree/main/backend/lifecycle/data)
++""")
++code('''sources = read('observed_data_sources.json')
++display(pd.DataFrame(sources)[['ticker', 'series_id', 'first_month', 'last_month', 'months', 'sha256']])
++records = [{'study': k, **v} for k,v in main.items()]
++records += [{'study': k, **v} for k,v in model.items()]
++records += [{'study': k, **v} for k,v in observed.items()]
++manifest = pd.DataFrame(records)
++display(manifest[['study','run_id','catalog_hash','engine_version']])
++''')
++md("""## Corrections and evaluation design
++
++| Calculation | Original implementation | Corrected implementation |
++|---|---|---|
++| Frontier objectives | 30-year success compared with 40-year consumption utility under default settings | Both objectives use 30 years |
++| Young investor horizons | End age raised to at least 70, extending a declared 10- or 20-year experiment | End age equals starting age plus the declared horizon |
++| Cash-flow comparison intervals | Variation across age/flow cells treated as sampling uncertainty | Paired simulation paths resampled jointly across cells, with fitted policies held fixed |
++| Tail spending loss | Quantile ties at zero could make the reported tail mean equal the overall mean | Worst 5% of probability mass, with fractional weight at the boundary |
++| Run identity | Dataset and specification determine the cache key | Scientific engine version also enters the key |
++
++The frontier extension uses 5,000 bootstrap paths, 300 joint path resamples, a five-percentage-point bond grid
++and withdrawal rates from 3% to 6% in 0.25-percentage-point steps. Risk-aversion values 2, 4, 6 and 8 are
++reported. A Student-t scenario comparison and a five-basis-point execution-cost comparison are included.
++
++The objective-selection holdout fits allocations on 5,000 paths and evaluates them on 10,000 separate paths.
++The chronological cash-flow test fits on 4,000 paths drawn solely from pre-split history and freezes the
++allocations before scoring later observed returns. Historical cohort results are descriptive because their
++windows overlap.
++""")
++code('''frontier_rows = []
++for name, record in {**model, **observed}.items():
++    if record['kind'] != 'frontier':
++        continue
++    r = results(record)
++    threshold = r['thresholds']['30|0.90']
++    uncertainty = r['threshold_bootstrap']['30|0.90']
++    for rate in [0.04, 0.045, 0.05, 0.055]:
++        i = int(np.argmin(np.abs(np.array(r['r']) - rate)))
++        row, boot = threshold[i], uncertainty[i]
++        p = np.array(r['p_success']['30'])[:,i]
++        frontier_rows.append({'sample':name, 'withdrawal_rate':rate,
++                             'minimum_bond_share':row['b_min'], 'status':row['status'],
++                             'best_success':p.max(), 'all_equity_success':p[0],
++                             'bootstrap_no_feasible_share':boot['share_unidentified'],
++                             'bond_share_q05':boot['q05'], 'bond_share_q95':boot['q95']})
++threshold_table = pd.DataFrame(frontier_rows)
++threshold_table.to_csv(OUT / 'frontier_summary.csv', index=False)
++display(threshold_table.round(4))
++early_model=threshold_table[(threshold_table['sample']=='matched_model_2002_2013') & np.isclose(threshold_table['withdrawal_rate'],.05)].iloc[0]
++early_ief=threshold_table[(threshold_table['sample']=='ief_2002_2013') & np.isclose(threshold_table['withdrawal_rate'],.05)].iloc[0]
++display(Markdown(f"At a 5% withdrawal rate, calibration on September 2002 through December 2013 "
++    f"produces a best success rate of **{early_model['best_success']:.2%}** with reconstructed Treasury returns "
++    f"and **{early_ief['best_success']:.2%}** with observed IEF returns. "
++    f"The IEF version requires at least **{early_ief['minimum_bond_share']:.0%}** bonds on the tested grid to reach 90% success. "
++    "Both tests use the same equity and inflation observations. This identifies material sensitivity to the bond return measurement."))
++''')
++md("""## Withdrawal success and minimum bond allocation
++
++The heatmaps compare the two bond sources over identical dates. The minimum-bond table reports a missing
++value when every tested allocation falls below 90% success. The reported bootstrap quantiles describe
++replicates with a feasible allocation, alongside the fraction with no feasible allocation.
++""")
++code('''fig, axes = plt.subplots(1,2,figsize=(12,4.2),layout='constrained')
++for ax, label, record in zip(axes, ['Reconstructed 10Y Treasury','Observed IEF ETF'],
++                              [model['matched_model'], observed['matched_ief']]):
++    r = results(record)
++    image = ax.pcolormesh(np.array(r['r'])*100,np.array(r['b'])*100,
++                         r['p_success']['30'], shading='nearest',vmin=.5,vmax=1,cmap='viridis')
++    ax.set(xlabel='Initial real withdrawal rate (%)',ylabel='Bond share (%)',title=label)
++fig.colorbar(image,ax=axes,label='Probability of funding all withdrawals for 30 years')
++export('matched_success_heatmaps')
++
++fig, ax = plt.subplots(figsize=(9,4.5))
++for label in ['1953_full','1990_onward','matched_model','matched_ief']:
++    frame = threshold_table[threshold_table['sample']==label]
++    labels={'1953_full':'Modelled Treasury, 1953-2026','1990_onward':'Modelled Treasury, 1990-2026',
++            'matched_model':'Modelled Treasury, 2002-2026','matched_ief':'Observed IEF, 2002-2026'}
++    ax.plot(frame['withdrawal_rate']*100,frame['minimum_bond_share']*100,marker='o',label=labels[label])
++ax.set(xlabel='Initial real withdrawal rate (%)',ylabel='Minimum bond share meeting 90% success (%)',
++       title='Sample and source sensitivity at selected withdrawal rates')
++ax.legend(frameon=False)
++export('minimum_bond_share')
++''')
++md("""## Consumption utility versus withdrawal success
++
++Certainty-equivalent consumption is the constant consumption level delivering the same expected discounted
++CRRA utility. The original frontier is compared with the corrected common-horizon calculation below.
++The independent-path evaluation then selects allocations using training paths only and reports their
++paired differences on the test paths. The intervals measure simulation uncertainty conditional on the
++calibrated model and selected policies.
++[Utility implementation](https://github.com/tanishpatel0106/FI-Acc-Dec-Wedmont/blob/main/backend/lifecycle/engine/lifecycle/utility.py)
++""")
++code('''original = read('baseline_frontier.json')
++corrected = results(main['frontier'])
++comparison = []
++for label, r in [('Original 40Y utility / 30Y success', original), ('Corrected 30Y utility / 30Y success', corrected)]:
++    v = next(x for x in r['optima'] if np.isclose(x['r'],.05))
++    comparison.append({'calculation':label, 'ce_optimal_bond_share':v['b_ce'],
++                       'success_optimal_bond_share':v['b_survival'],
++                       'ce_optimal_success':v['p_at_ce_opt'], 'success_optimal_success':v['p_at_surv_opt']})
++display(pd.DataFrame(comparison))
++allocation_rows=[]
++for dataset in ['main','observed']:
++    holdout = read(dataset+'_allocation_holdout.json')
++    for r in holdout['results']:
++        d=r['test_ce_delta_ce_vs_survival']
++        allocation_rows.append({'dataset':dataset,'withdrawal_rate':r['withdrawal_rate'],
++            'ce_selected_bond_share':r['trained_ce_bond_share'],
++            'success_selected_bond_share':r['trained_survival_bond_share'],
++            'test_ce_gain':d['delta'],'ci_lo':d['lo'],'ci_hi':d['hi'],
++            'test_success_change':r['test_success_delta_ce_vs_survival']['diff']})
++allocation_table=pd.DataFrame(allocation_rows)
++allocation_table.to_csv(OUT/'allocation_holdout_summary.csv',index=False)
++display(allocation_table.round(4))
++fig, axes=plt.subplots(1,2,figsize=(11,4),layout='constrained')
++for ax,dataset in zip(axes,['main','observed']):
++    f=allocation_table[allocation_table['dataset']==dataset]
++    ax.plot(f['withdrawal_rate']*100,f['ce_selected_bond_share']*100,'o-',label='Consumption utility')
++    ax.plot(f['withdrawal_rate']*100,f['success_selected_bond_share']*100,'s-',label='Withdrawal success')
++    title='Long-history Treasury model' if dataset=='main' else 'Observed IEF'
++    ax.set(title=title,xlabel='Withdrawal rate (%)',ylabel='Bond share selected in training (%)')
++    ax.legend(frameon=False)
++export('trained_objective_comparison')
++''')
++md("""## Age and planned cash flows
++
++The signed-flow surface defines q as planned annual net withdrawals divided by reference wealth. Negative q
++represents saving. Its objective is CRRA utility of terminal real wealth plus funded draws. This resources
++objective differs from the discounted consumption objective used above, so its numerical CE levels are
++reported separately.
++
++The surface contains no labour-income or human-capital channel. Holding its horizon fixed leaves no direct
++age effect in the resources objective. The revised horizon mapping makes that structure visible. Survey
++risk willingness and measured household loss capacity remain separate empirical inputs to the broader project.
++""")
++code('''sf=results(main['signed_flow'])
++display(pd.DataFrame(sf['slopes'])[['age','slope','lo','hi']].round(4))
++display(pd.DataFrame([sf['policies']['oos_full_vs_age']]))
++fig,ax=plt.subplots(figsize=(9,4))
++for q in [-.05,0,.04,.06]:
++    qi=int(np.argmin(np.abs(np.array(sf['q'])-q)))
++    ax.plot(sf['ages'],np.array(sf['b_ce'])[:,qi]*100,marker='o',label=f'q = {q:.0%}')
++ax.set(xlabel='Starting age',ylabel='Selected bond share (%)',title='Corrected signed-flow surface')
++ax.legend(frameon=False)
++export('age_and_flow_surface')
++
++historical=pd.concat([pd.read_csv(OUT/(d+'_chronological_holdout.csv')) for d in ['main','observed']],ignore_index=True)
++summary=historical.groupby(['dataset','max_horizon','split_year'],as_index=False).agg(
++    mean_full_vs_age_delta=('full_vs_age_delta','mean'),
++    min_cohort_count=('n_overlapping_cohorts','min'), max_cohort_count=('n_overlapping_cohorts','max'))
++display(summary.round(4))
++summary.to_csv(OUT/'chronological_summary.csv',index=False)
++fig,axes=plt.subplots(1,2,figsize=(11,4),layout='constrained')
++for ax,dataset in zip(axes,['main','observed']):
++    f=summary[summary['dataset']==dataset]
++    for horizon,g in f.groupby('max_horizon'):
++        ax.plot(g['split_year'],g['mean_full_vs_age_delta']*100,'o-',label=f'Maximum {horizon} years')
++    ax.axhline(0,color='grey',linewidth=1)
++    title='Long-history Treasury model' if dataset=='main' else 'Observed IEF'
++    ax.set(title=title,xlabel='First out-of-sample year',ylabel='Age + flow CE gain over age-only (%)')
++    ax.legend(frameon=False)
++export('chronological_holdout')
++''')
++code('''sim=sf['policies']['oos_full_vs_age']
++window_rows=threshold_table[np.isclose(threshold_table['withdrawal_rate'],.05)]
++display(Markdown(f"The corrected simulation estimates an age-plus-flow relative resources CE change of "
++                 f"**{sim['delta']:.2%}**, with a paired 95% interval of "
++                 f"**[{sim['lo']:.2%}, {sim['hi']:.2%}]**, against the age-only policy. "
++                 "The chronological table reports whether this sign persists in later observed cohorts. "
++                 "Each split retains its own result because the test windows and cohorts overlap."))
++display(window_rows[['sample','minimum_bond_share','best_success','status']].round(4))
++''')
++md("""## Permanent Portfolio and reproducibility
++
++Observed GLD returns allow the previously unavailable classic Permanent Portfolio study to run. Its
++Treasury sleeves retain the original return reconstruction, and its comparison uses the joint available
++history. The table reports the paired simulation interval against the 60/40 benchmark.
++""")
++code('''pp=results(observed['permanent_with_observed_gold'])
++pp_rows=[]
++for r in pp['scorecard']:
++    d=r.get('delta_ce_vs_benchmark',{})
++    pp_rows.append({'policy':r['policy'],'annual_ce':r['ce']['ce'],
++                    'success_30y':r['success']['30']['p'],
++                    'delta_ce_vs_6040':d.get('delta',0), 'ci_lo':d.get('lo'), 'ci_hi':d.get('hi'),
++                    'unmet_spending_cvar95':r['severity']['cvar95_unconditional']})
++display(pd.DataFrame(pp_rows).round(4))
++pp_table=pd.DataFrame(pp_rows)
++pp_table.to_csv(OUT/'permanent_portfolio_summary.csv',index=False)
++display(pd.DataFrame([read('verification.json')]).T.rename(columns={0:'verification'}))
++''')
++md("""## Reproduction and outstanding dependencies
++
++From the repository root, install the locked backend environment and web dependencies, rebuild the public
++snapshot panel, and run the studies. The optional observed data are kept in `data/validation_etfs`.
++
++```powershell
++python -m uv sync --project backend --extra dev --extra wrds --extra workers --frozen
++backend/.venv/Scripts/python.exe -m lifecycle.cli ingest --offline
++backend/.venv/Scripts/python.exe research/validate_followup.py --stage all
++$env:LIFECYCLE_DATA_DIR='data/validation_etfs'
++backend/.venv/Scripts/python.exe -m lifecycle.data.ingest_public_etfs --snapshot research/followup_2026_11_19/observed_etf_monthly_returns.csv
++backend/.venv/Scripts/python.exe research/validate_followup.py --stage all --dataset observed
++Remove-Item Env:LIFECYCLE_DATA_DIR
++backend/.venv/Scripts/python.exe research/validate_allocation_holdout.py
++backend/.venv/Scripts/python.exe research/validate_allocation_holdout.py --observed
++```
++
++For a clean rerun, copy `data/raw` and `data/processed` into the corresponding folders under
++`data/validation_etfs` before observed ingestion. An executed notebook accompanies the persisted derived
++results. Raw daily vendor responses remain local. The frozen monthly return snapshot is included.
++`validation_manifest.json` records SHA-256 hashes of the report inputs.
++
++WRDS ingestion requires an account login and any Duo approval. Employer installation awaits the employer's
++reply and GitHub username. The repository access and local execution steps remain pending that response.
++The reviewed email, Drive search and project files yielded the meeting invitation and follow-up email.
++A recording link and transcript have yet to be located.
++
++### References and provenance
++
++- Tanish's employer follow-up, November 10, 2026, and the project application guide.
++- [Project source and original result summary](https://github.com/tanishpatel0106/FI-Acc-Dec-Wedmont/blob/4b0c23ec63f760feb8bcfbaecddd5746921f21d4/docs/APP_GUIDE.md)
++- [Project pre-analysis plan](https://github.com/tanishpatel0106/FI-Acc-Dec-Wedmont/blob/main/research/preregistration/analysis_plan.md)
++- [Kenneth French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html)
++- [FRED CPIAUCNS](https://fred.stlouisfed.org/series/CPIAUCNS)
++- [Federal Reserve Treasury yield-curve research](https://www.federalreserve.gov/econres/feds/the-us-treasury-yield-curve-1961-to-the-present.htm)
++- [IEF fund and maturity definition](https://www.ishares.com/us/products/239456/ishares-710-year-treasury-bond-etf)
++- [Yahoo Finance IEF historical observations](https://finance.yahoo.com/quote/IEF/history/)
++- [Yahoo Finance GLD historical observations](https://finance.yahoo.com/quote/GLD/history/)
++
++The repository bibliography supplies the broader lifecycle and bootstrap literature. This follow-up
++reproduces and audits the project's implemented model. The independent historical tests evaluate its fitted
++allocation rules on later returns.
++""")
++notebook = nbf.v4.new_notebook(cells=cells, metadata={"kernelspec": {
++    "display_name": "Python 3", "language": "python", "name": "python3"},
++    "title": "Fixed-income allocation validation"})
++nbf.write(notebook, OUT / "fixed_income_validation.ipynb")
++print("Created", OUT / "fixed_income_validation.ipynb")
+diff --git a/research/render_followup.py b/research/render_followup.py
+new file mode 100644
+index 0000000..f1fe4c2
+--- /dev/null
++++ b/research/render_followup.py
+@@ -0,0 +1,34 @@
++"""Execute and render the report with this Python interpreter and isolated Jupyter configuration."""
++import json
++import sys
++import tempfile
++from pathlib import Path
++
++import nbformat
++from jupyter_client import KernelManager
++from jupyter_client.kernelspec import KernelSpecManager
++from nbclient import NotebookClient
++from nbconvert import HTMLExporter
++from traitlets.config import Config
++
++folder = Path(__file__).resolve().parent / "followup_2026_11_19"
++path = folder / "fixed_income_validation.ipynb"
++notebook = nbformat.read(path, as_version=4)
++with tempfile.TemporaryDirectory(prefix="lifecycle-report-kernel-") as temp:
++    kernel = Path(temp) / "followup"
++    kernel.mkdir()
++    (kernel / "kernel.json").write_text(json.dumps({
++        "argv": [sys.executable, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
++        "display_name": "LIFECYCLE report", "language": "python"}), encoding="utf-8")
++    manager = KernelManager(kernel_name="followup", kernel_spec_manager=KernelSpecManager(kernel_dirs=[temp]))
++    client = NotebookClient(notebook, km=manager, timeout=300, resources={"metadata": {"path": str(folder)}})
++    try:
++        client.execute()
++    finally:
++        if manager.has_kernel:
++            manager.shutdown_kernel(now=True)
++nbformat.write(notebook, path)
++exporter = HTMLExporter(config=Config(), template_name="lab")
++html, _ = exporter.from_notebook_node(notebook, resources={"metadata": {"name": "Fixed-income allocation validation"}})
++path.with_suffix(".html").write_text(html, encoding="utf-8")
++print("Executed and rendered", path)
+diff --git a/research/results/v2_run_ids.json b/research/results/v2_run_ids.json
+index 1943c0e..cf06aca 100644
+--- a/research/results/v2_run_ids.json
++++ b/research/results/v2_run_ids.json
+@@ -1,61 +1,61 @@
+-{
+-  "frontier": {
+-    "run_id": "829771eddae0b2607682",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 17.883641481399536
+-  },
+-  "signed_flow": {
+-    "run_id": "65860f4af6440d1590bc",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 24.563958883285522
+-  },
+-  "rebalance": {
+-    "run_id": "27b3342dae46e41a805d",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 2.622076988220215
+-  },
+-  "scenario_lab": {
+-    "run_id": "c42f699cbc2ebc7c10ac",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 4.698688983917236
+-  },
+-  "optimize": {
+-    "run_id": "cc784d17cfe62f4e189a",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 12.855492115020752
+-  },
+-  "compare_v2": {
+-    "run_id": "fa9a8c8ab68d5cc80ee7",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 1.8070344924926758
+-  },
+-  "asof": {
+-    "run_id": "1abb1b9015a69b1ab163",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 1.9883005619049072
+-  },
+-  "permanent": {
+-    "run_id": "8fe9913e56468b1ac57d",
+-    "status": "failed",
+-    "error": "IncompatibleUniverse: universe pp_modern_etf is missing required series: gold",
+-    "seconds": null
+-  },
+-  "permanent_core_duration": {
+-    "run_id": "7ff76814bc3a60c58dfb",
+-    "status": "done",
+-    "error": null
+-  },
+-  "evidence": {
+-    "run_id": "5f978b35f598800bb2aa",
+-    "status": "done",
+-    "error": null,
+-    "seconds": 2.3790359497070312
+-  }
++{
++  "frontier": {
++    "run_id": "15396257c3d3bfcb163e",
++    "status": "done",
++    "error": null,
++    "seconds": 26.47049641609192
++  },
++  "signed_flow": {
++    "run_id": "3c15e68b970135cb144d",
++    "status": "done",
++    "error": null,
++    "seconds": 14.351255178451538
++  },
++  "rebalance": {
++    "run_id": "b42f4a607fb70c037045",
++    "status": "done",
++    "error": null,
++    "seconds": 1.5521700382232666
++  },
++  "scenario_lab": {
++    "run_id": "29194f5a9e962706c75f",
++    "status": "done",
++    "error": null,
++    "seconds": 3.4555978775024414
++  },
++  "optimize": {
++    "run_id": "ea3c0f79c972a42d7904",
++    "status": "done",
++    "error": null,
++    "seconds": 8.202512741088867
++  },
++  "compare_v2": {
++    "run_id": "0f2900dc65ded619c306",
++    "status": "done",
++    "error": null,
++    "seconds": 1.312398910522461
++  },
++  "asof": {
++    "run_id": "32ed9ceea7d75f71c9c3",
++    "status": "done",
++    "error": null,
++    "seconds": 1.2286429405212402
++  },
++  "permanent": {
++    "run_id": "9d43ff9ca8d4f78b8a78",
++    "status": "failed",
++    "error": "IncompatibleUniverse: universe pp_modern_etf is missing required series: gold",
++    "seconds": null
++  },
++  "permanent_core_duration": {
++    "run_id": "672c92d3bbfb194c9c05",
++    "status": "done",
++    "error": null
++  },
++  "evidence": {
++    "run_id": "84494473d0a51f421125",
++    "status": "done",
++    "error": null,
++    "seconds": 1.6785852909088135
++  }
+ }
+\ No newline at end of file
+diff --git a/research/validate_allocation_holdout.py b/research/validate_allocation_holdout.py
+new file mode 100644
+index 0000000..2175045
+--- /dev/null
++++ b/research/validate_allocation_holdout.py
+@@ -0,0 +1,58 @@
++"""Fit CE/success-optimal bond shares on training paths and score on separate test paths."""
++import json
++import os
++from pathlib import Path
++
++import numpy as np
++from lifecycle.data import panel
++from lifecycle.runs.jsonsafe import clean
++from lifecycle.studies import common as S
++from numba import set_num_threads
++
++OUT = Path(__file__).resolve().parent / "followup_2026_11_19"
++
++
++def run(observed=False):
++    set_num_threads(4)
++    if observed:
++        os.environ["LIFECYCLE_DATA_DIR"] = "data/validation_etfs"
++        panel.reload()
++    name = "observed" if observed else "main"
++    data = S.StudyData(universe="observed_treasury_etf" if observed else "core_long_history",
++                       calibration_start="2002-09-01" if observed else "1953-01-01",
++                       calibration_end="2026-09-30")
++    bond = "ust_7_10_etf" if observed else "ust_10y"
++    scen = S.StudyScenario(n_paths=10000, n_train_paths=5000, seed=20261119, k_regimes=1)
++    inv = S.StudyInvestor(horizon_years=30)
++    _, test, train = S.train_test(data, scen, inv, S.StudyPrefs())
++    bs = np.round(np.arange(0, 1.001, 0.05), 2)
++    rows = []
++    for rate in (0.04, 0.045, 0.05, 0.055):
++        training, testing = [], []
++        for b in bs:
++            w = S.weights_vector({"us_eq": 1 - b, bond: b}, test.tensor.assets)
++            training.append(S.run(train, w, S.strategy("calendar_12m"), rate=rate))
++            testing.append(S.run(test, w, S.strategy("calendar_12m"), rate=rate))
++        ce = np.array([S.ce_of(o, 4) for o in training])
++        survival = np.array([(o.first_shortfall < 0).mean() for o in training])
++        i_ce, i_surv = int(ce.argmax()), int(survival.argmax())
++        candidate, reference = testing[i_ce], testing[i_surv]
++        delta_ce = S.delta_block(candidate, reference, 4, n_boot=400)
++        delta_success = S.paired_success_diff(candidate.first_shortfall < 0, reference.first_shortfall < 0)
++        rows.append({"withdrawal_rate": rate, "trained_ce_bond_share": bs[i_ce],
++                     "trained_survival_bond_share": bs[i_surv], "test_ce_opt_success": float((candidate.first_shortfall < 0).mean()),
++                     "test_survival_opt_success": float((reference.first_shortfall < 0).mean()),
++                     "test_ce_delta_ce_vs_survival": delta_ce,
++                     "test_success_delta_ce_vs_survival": delta_success})
++        print("allocation holdout", name, rate, bs[i_ce], bs[i_surv], flush=True)
++    result = {"dataset": name, "horizon_years": 30, "gamma": 4, "train_paths": 5000, "test_paths": 10000,
++              "seed": scen.seed, "data": data.model_dump(), "catalog_hash": panel.catalog_hash(),
++              "bond": bond, "bond_grid": bs.tolist(), "results": rows,
++              "inference": "paired simulation paths conditional on model and trained policies"}
++    (OUT / f"{name}_allocation_holdout.json").write_text(json.dumps(clean(result), indent=2), encoding="utf-8")
++
++
++if __name__ == "__main__":
++    import sys
++
++    run("--observed" in sys.argv)
+diff --git a/research/validate_followup.py b/research/validate_followup.py
+new file mode 100644
+index 0000000..750c730
+--- /dev/null
++++ b/research/validate_followup.py
+@@ -0,0 +1,199 @@
++"""Reproduce and extend the November 10 employer demonstration.
++
++Run with backend/.venv/Scripts/python.exe research/validate_followup.py --stage all.
++Use --dataset observed for the separate public-ETF validation panel.
++"""
++import argparse
++import json
++import os
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++
++ROOT = Path(__file__).resolve().parents[1]
++OUT = ROOT / "research" / "followup_2026_11_19"
++
++
++def save(name, value):
++    from lifecycle.runs.jsonsafe import clean
++
++    OUT.mkdir(exist_ok=True)
++    (OUT / name).write_text(json.dumps(clean(value), indent=2, default=str), encoding="utf-8")
++
++
++def execute(kind, spec, label):
++    from lifecycle.runs import executor, registry
++
++    rid = executor.run_sync(kind, spec, label)
++    row = registry.get(rid)
++    print(label, rid, row["status"], flush=True)
++    if row["status"] != "done":
++        raise RuntimeError(row.get("error"))
++    result = registry.load_results(rid)
++    save(rid + ".json", result)
++    return {"run_id": rid, "kind": kind, "label": label, "spec": row["spec"],
++            "catalog_hash": row["catalog_hash"], "engine_version": row["engine_version"]}
++
++
++def baseline():
++    from lifecycle.runs import registry
++
++    ids = json.loads((OUT / "baseline_run_ids.json").read_text())
++    for kind in ("frontier", "signed_flow"):
++        rid = ids[kind]["run_id"]
++        save("baseline_" + kind + ".json", registry.load_results(rid))
++
++
++def studies():
++    from lifecycle.runs import registry
++    from lifecycle.studies import registry as studies_registry
++    from lifecycle.studies.historical_replay import HistoricalReplaySpec, ReplayInvestor
++    from lifecycle.studies.lifecycle_sim import LifecycleSimSpec
++
++    results = {}
++    for kind in ("frontier", "signed_flow", "rebalance", "scenario_lab", "optimize", "compare_v2", "asof"):
++        results[kind] = execute(kind, studies_registry.spec_model(kind)(), "corrected default " + kind)
++    evidence = studies_registry.spec_model("evidence")(
++        study_ids={k: v["run_id"] for k, v in results.items()})
++    results["evidence"] = execute("evidence", evidence, "corrected baseline evidence")
++    investor = ReplayInvestor(start_age=30)
++    results["historical_replay"] = execute("historical_replay", HistoricalReplaySpec(
++        start="2006-01", investor=investor, experiments=True,
++        policies=("sixty_forty", "target_date", "lifecycle_adaptive")), "employer demo: age 30 in January 2006")
++    results["lifecycle_sim"] = execute("lifecycle_sim", LifecycleSimSpec(
++        start="2006-01", investor=investor), "dated lifecycle simulation: January 2006 information")
++    results["multi_asset"] = execute("multi_asset", studies_registry.spec_model("multi_asset")(),
++                                      "default public multi-asset study")
++    save("main_runs.json", results)
++    registry_report = {k: registry.get(v["run_id"])["status"] for k, v in results.items()}
++    save("main_status.json", registry_report)
++
++
++def frontiers(dataset):
++    from lifecycle.studies.common import (
++        StudyCosts,
++        StudyData,
++        StudyInvestor,
++        StudyScenario,
++    )
++    from lifecycle.studies.frontier import FrontierSpec
++    from lifecycle.studies.permanent import PermanentSpec
++
++    configs = [("1953_full", "core_long_history", "ust_10y", "1953-01-01", "2026-09-30"),
++               ("1990_onward", "core_long_history", "ust_10y", "1990-01-01", "2026-09-30"),
++               ("matched_model", "core_long_history", "ust_10y", "2002-09-01", "2026-09-30"),
++               ("matched_model_2002_2013", "core_long_history", "ust_10y", "2002-09-01", "2013-12-31"),
++               ("matched_model_2014_onward", "core_long_history", "ust_10y", "2014-01-01", "2026-09-30")]
++    if dataset == "observed":
++        configs = [("matched_ief", "observed_treasury_etf", "ust_7_10_etf", "2002-09-01", "2026-09-30"),
++                   ("ief_2002_2013", "observed_treasury_etf", "ust_7_10_etf", "2002-09-01", "2013-12-31"),
++                   ("ief_2014_onward", "observed_treasury_etf", "ust_7_10_etf", "2014-01-01", "2026-09-30")]
++    results = {}
++    for label, universe, bond, start, end in configs:
++        spec = FrontierSpec(data=StudyData(universe=universe, calibration_start=start, calibration_end=end),
++                            scenario=StudyScenario(n_paths=5000, n_train_paths=2000, seed=20261119, k_regimes=1),
++                            investor=StudyInvestor(horizon_years=40), bond=bond, r_start=0.03, r_stop=0.06,
++                            r_step=0.0025, n_boot=300, alt_generators=("student_t",), alt_windows=(),
++                            gammas=(2, 4, 6, 8), bond_assets=("tbill", bond))
++        results[label] = execute("frontier", spec, label)
++        if label in ("1990_onward", "matched_ief"):
++            cost_spec = spec.model_copy(update={"costs": StudyCosts(half_spread_bps=5)})
++            results[label + "_cost5bps"] = execute("frontier", cost_spec, label + " with 5bp trading costs")
++    if dataset == "observed":
++        results["permanent_with_observed_gold"] = execute("permanent", PermanentSpec(),
++                                                           "classic Permanent Portfolio with observed GLD")
++    save(dataset + "_frontier_runs.json", results)
++
++
++def holdout(dataset):
++    """Freeze allocations on pre-split bootstrap paths, score completed post-split historical cohorts."""
++    from lifecycle.data import panel
++    from lifecycle.runs import context as C
++    from lifecycle.studies import common as S
++
++    universe = "observed_treasury_etf" if dataset == "observed" else "core_long_history"
++    bond = "ust_7_10_etf" if dataset == "observed" else "ust_10y"
++    ages = (35, 55, 65, 85)
++    qs = (-0.05, -0.02, 0, 0.02, 0.04, 0.06)
++    bs = np.round(np.arange(0, 1.001, 0.1), 2)
++    data_start = "2002-09-01" if dataset == "observed" else "1953-01-01"
++    splits = (2008, 2012, 2015) if dataset == "observed" else (1990, 2000, 2005, 2010, 2015)
++    rows, fitted = [], []
++    for horizon in (10, 20):
++        for split in splits:
++            train_data = S.StudyData(universe=universe, calibration_start=data_start,
++                                     calibration_end=f"{split - 1}-12-31")
++            test_data = S.StudyData(universe=universe, calibration_start=f"{split}-01-01",
++                                    calibration_end="2026-09-30")
++            available = len(panel.universe_data(universe, test_data.calibration_start, test_data.calibration_end).real)
++            if available < horizon * 12:
++                continue
++            train_ce = np.zeros((len(ages), len(qs), len(bs)))
++            outcomes = {}
++            for ai, age in enumerate(ages):
++                h = min(horizon, 95 - age)
++                inv = S.StudyInvestor(age=age, retirement_age=65, horizon_years=h)
++                scen = S.StudyScenario(n_paths=4000, n_train_paths=4000, seed=20261119, k_regimes=1)
++                es = S.experiment_spec(train_data, scen, inv)
++                train = S.get_context(es, S.get_tensor(es), es.scenario.seed)
++                hist_es = S.experiment_spec(test_data, scen.model_copy(update={"generator": "historical"}), inv)
++                historical_tensor = S.get_tensor(hist_es)
++                history = S.get_context(hist_es, historical_tensor, hist_es.scenario.seed)
++                for qi, q in enumerate(qs):
++                    for bi, b in enumerate(bs):
++                        weights = S.weights_vector({"us_eq": 1 - b, bond: b}, train.tensor.assets)
++                        a = S.run(train, weights, S.strategy("calendar_12m"), spend="signed", q=q, zero_income=True)
++                        z = S.run(history, weights, S.strategy("calendar_12m"), spend="signed", q=q, zero_income=True)
++                        train_ce[ai, qi, bi] = S.resources_ce(a.terminal, a.funded, 4)
++                        outcomes[ai, qi, bi] = z
++                C._TENSORS.clear()
++            best = train_ce.argmax(axis=2)
++            age_only = (train_ce / train_ce.max(axis=2, keepdims=True)).sum(axis=1).argmax(axis=1)
++            for ai, age in enumerate(ages):
++                for qi, q in enumerate(qs):
++                    full = outcomes[ai, qi, best[ai, qi]]
++                    restricted = outcomes[ai, qi, age_only[ai]]
++                    ce_full = S.resources_ce(full.terminal, full.funded, 4)
++                    ce_age = S.resources_ce(restricted.terminal, restricted.funded, 4)
++                    rows.append({"dataset": dataset, "split_year": split, "max_horizon": horizon,
++                                 "age": age, "actual_horizon": min(horizon, 95 - age), "q": q,
++                                 "full_bond_share": bs[best[ai, qi]], "age_only_bond_share": bs[age_only[ai]],
++                                 "full_ce_resources": ce_full, "age_only_ce_resources": ce_age,
++                                 "full_vs_age_delta": ce_full / ce_age - 1,
++                                 "full_success": float((full.first_shortfall < 0).mean()),
++                                 "age_only_success": float((restricted.first_shortfall < 0).mean()),
++                                 "n_overlapping_cohorts": len(full.terminal),
++                                 "train_end": train_data.calibration_end, "test_start": test_data.calibration_start,
++                                 "catalog_hash": panel.catalog_hash()})
++            fitted.append({"split_year": split, "horizon": horizon, "best_b": bs[best].tolist(),
++                           "age_only_b": bs[age_only].tolist(), "train_ce": train_ce.tolist()})
++            print("chronological holdout", dataset, split, horizon, flush=True)
++    pd.DataFrame(rows).to_csv(OUT / f"{dataset}_chronological_holdout.csv", index=False)
++    save(f"{dataset}_holdout_specs.json", {"ages": ages, "q": qs, "bond_grid": bs.tolist(),
++          "gamma": 4, "train_paths": 4000, "seed": 20261119, "catalog_hash": panel.catalog_hash(),
++          "cell_weighting": "equal weights over the declared age and signed-flow grid",
++          "objective": "CRRA certainty equivalent of terminal real wealth plus funded draws, USD 1000 floor",
++          "inference": "descriptive completed overlapping cohorts, without iid confidence intervals", "fitted": fitted})
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--stage", choices=("baseline", "studies", "frontiers", "holdout", "all"), default="all")
++    parser.add_argument("--dataset", choices=("main", "observed"), default="main")
++    args = parser.parse_args()
++    if args.dataset == "observed":
++        os.environ["LIFECYCLE_DATA_DIR"] = "data/validation_etfs"
++    os.environ.setdefault("NUMBA_NUM_THREADS", "4")
++    if args.stage == "baseline":
++        baseline()
++    if args.stage in ("studies", "all") and args.dataset == "main":
++        studies()
++    if args.stage in ("frontiers", "all"):
++        frontiers(args.dataset)
++    if args.stage in ("holdout", "all"):
++        holdout(args.dataset)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/web/app/layout.tsx b/web/app/layout.tsx
+index 032140c..ba9d14a 100644
+--- a/web/app/layout.tsx
++++ b/web/app/layout.tsx
+@@ -1,4 +1,5 @@
+ import type { Metadata } from "next";
++import type { ReactNode } from "react";
+ import { Geist, Geist_Mono } from "next/font/google";
+ import "katex/dist/katex.min.css";
+ import "./globals.css";
+@@ -13,7 +14,7 @@ export const metadata: Metadata = {
+   description: "One research application for withdrawal risk, lifecycle cash flows, portfolio construction, fixed income, scenarios and statistical validation.",
+ };
+ 
+-export default function RootLayout({ children }: LayoutProps<"/">) {
++export default function RootLayout({ children }: { children: ReactNode }) {
+   return (
+     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+       <body className="min-h-full">
+diff --git a/web/lib/api/openapi.json b/web/lib/api/openapi.json
+index f1923dc..57e8394 100644
+--- a/web/lib/api/openapi.json
++++ b/web/lib/api/openapi.json
+@@ -3,7 +3,7 @@
+   "info": {
+     "title": "LIFECYCLE API",
+     "description": "Multi-asset portfolio optimisation & lifetime utility research platform. Research output only - not investment advice.",
+-    "version": "0.2.0"
++    "version": "0.2.3"
+   },
+   "paths": {
+     "/v1/catalog/series": {
+@@ -2808,6 +2808,103 @@
+         }
+       }
+     },
++    "/v1/runs": {
++      "get": {
++        "tags": [
++          "v2 research"
++        ],
++        "summary": "List All Runs",
++        "description": "One registry for every run kind (experiments, sweeps, comparisons, validations, attributions,\nhypotheses and the nine studies), each with its accounting semantics and page.",
++        "operationId": "list_all_runs_v1_runs_get",
++        "parameters": [
++          {
++            "name": "kind",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Kind"
++            }
++          },
++          {
++            "name": "status",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Status"
++            }
++          },
++          {
++            "name": "family",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string",
++                  "pattern": "^(study|experiment)$"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Family"
++            }
++          },
++          {
++            "name": "limit",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "integer",
++              "maximum": 2000,
++              "minimum": 1,
++              "default": 200,
++              "title": "Limit"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "additionalProperties": true,
++                  "title": "Response List All Runs V1 Runs Get"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/v1/runs/{run_id}/inspect": {
+       "get": {
+         "tags": [
+@@ -3227,8 +3324,11 @@
+               "core_long_history",
+               "core_duration",
+               "pp_modern_etf",
++              "multi_asset_public",
++              "multi_asset_full",
+               "pp_research_historical",
+-              "liability_match"
++              "liability_match",
++              "observed_treasury_etf"
+             ],
+             "title": "Universe",
+             "default": "core"
+@@ -3390,7 +3490,7 @@
+           "max_age": {
+             "type": "number",
+             "maximum": 110.0,
+-            "minimum": 70.0,
++            "minimum": 20.0,
+             "title": "Max Age",
+             "default": 100.0
+           },
+diff --git a/web/lib/api/schema.d.ts b/web/lib/api/schema.d.ts
+index 595dcf4..cee82dc 100644
+--- a/web/lib/api/schema.d.ts
++++ b/web/lib/api/schema.d.ts
+@@ -893,6 +893,27 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/v1/runs": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * List All Runs
++         * @description One registry for every run kind (experiments, sweeps, comparisons, validations, attributions,
++         *     hypotheses and the nine studies), each with its accounting semantics and page.
++         */
++        get: operations["list_all_runs_v1_runs_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/v1/runs/{run_id}/inspect": {
+         parameters: {
+             query?: never;
+@@ -1118,7 +1139,7 @@ export interface components {
+              * @default core
+              * @enum {string}
+              */
+-            universe: "core" | "modern" | "core_long_history" | "core_duration" | "pp_modern_etf" | "pp_research_historical" | "liability_match";
++            universe: "core" | "modern" | "core_long_history" | "core_duration" | "pp_modern_etf" | "multi_asset_public" | "multi_asset_full" | "pp_research_historical" | "liability_match" | "observed_treasury_etf";
+             /** Calibration Start */
+             calibration_start?: string | null;
+             /** Calibration End */
+@@ -3226,6 +3247,42 @@ export interface operations {
+             };
+         };
+     };
++    list_all_runs_v1_runs_get: {
++        parameters: {
++            query?: {
++                kind?: string | null;
++                status?: string | null;
++                family?: string | null;
++                limit?: number;
++            };
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": {
++                        [key: string]: unknown;
++                    };
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
+     run_inspect_v1_runs__run_id__inspect_get: {
+         parameters: {
+             query?: never;
+diff --git a/web/package-lock.json b/web/package-lock.json
+index 73fb6d0..11dfc2a 100644
+--- a/web/package-lock.json
++++ b/web/package-lock.json
+@@ -20,7 +20,7 @@
+         "katex": "^0.16.47",
+         "lucide-react": "^1.65.0",
+         "motion": "^14.9.0",
+-        "next": "16.4.3",
++        "next": "16.4.6",
+         "next-themes": "^0.4.6",
+         "plotly.js-dist-min": "^3.1.0",
+         "react": "19.3.0",
+@@ -45,7 +45,7 @@
+         "@types/react-dom": "^19",
+         "@types/react-plotly.js": "^2.6.4",
+         "eslint": "^9",
+-        "eslint-config-next": "16.4.3",
++        "eslint-config-next": "16.4.6",
+         "jsdom": "^29.1.1",
+         "openapi-typescript": "^7.13.0",
+         "tailwindcss": "^4",
+@@ -2344,15 +2344,15 @@
+       }
+     },
+     "node_modules/@next/env": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/env/-/env-16.4.3.tgz",
+-      "integrity": "sha512-a7tz1QCcWWkwC/rPJcPMJk/UNRu9CFhDd3OHYE5hddbJrs8BqRTalxI6GlKCWEGzRLHN+S/B7a4PAHCtm25aBQ==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/env/-/env-16.4.6.tgz",
++      "integrity": "sha512-SunBjJ6t+oBtecS3dTjdVuMhUogP5wD/vrGL5EVuQYM1iS4O5ilL51HkiJ3sPjMzRHiCChvr4dbaSJbR7F3lxA==",
+       "license": "MIT"
+     },
+     "node_modules/@next/eslint-plugin-next": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/eslint-plugin-next/-/eslint-plugin-next-16.4.3.tgz",
+-      "integrity": "sha512-oxuC06wt/71h6ACYCV9GbKOfnf5a7VlRe/p80YHTut15TNgDEmynDnaq8t/xhy5rlvk7dhItIPs6H3rvIM4kyw==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/eslint-plugin-next/-/eslint-plugin-next-16.4.6.tgz",
++      "integrity": "sha512-HdqERVOafOD8JaUSAkwf9aSu/1rsHlkN8C5GcXYBH3C/z1MxBhZFxB5rz/xqMMRiIj7r9tIv8OCLQ9JWUxCvWA==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -2393,9 +2393,9 @@
+       }
+     },
+     "node_modules/@next/swc-darwin-arm64": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-16.4.3.tgz",
+-      "integrity": "sha512-4yq5EXBt+VDtAZwTyfijaFp5D2C5oz3Ikw5a2kiX2K9nw72vrZX2q5UuAlkPtUMO1tQz6JTKpaKWjS7OOefTDQ==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-16.4.6.tgz",
++      "integrity": "sha512-kJ4VVZkley17xKaJx72QN2IBqjrj7zenCQZaUF0l9ShS/1Mt2kW4+Z5KGG6vgr3L/J562xTOizVyM1iA/u5nlg==",
+       "cpu": [
+         "arm64"
+       ],
+@@ -2409,9 +2409,9 @@
+       }
+     },
+     "node_modules/@next/swc-darwin-x64": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-16.4.3.tgz",
+-      "integrity": "sha512-1Rvkn/LUhnEF8WxnRkOrqGhbwXui1bkWFxONKIbN+r7C+9KHDSZ+iUoj4CzymVMWUyZIyx9szcb9+kbKhD500A==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-16.4.6.tgz",
++      "integrity": "sha512-eIPGZIqC+8JKaeZmvnCANJQF4xWkkHqSnAAajtFxgwDMAOnCgxNvP52SeWZ41PyVwoe+Le/NQuZSaQ8j7YshSA==",
+       "cpu": [
+         "x64"
+       ],
+@@ -2425,9 +2425,9 @@
+       }
+     },
+     "node_modules/@next/swc-linux-arm64-gnu": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-16.4.3.tgz",
+-      "integrity": "sha512-dCKpXErGg3abUM6t5JTJV/ottVBTStJB5lRJTbgdUdQaQ+jNHiK56Hsc0YAEg/rinSh42hYG3HWiYmEMdilnxg==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-16.4.6.tgz",
++      "integrity": "sha512-9nI6O8vvczH2D9ZNdMGqb/3NuT15T9ksOZnAmx9/gjF2cOi74+xxyf1Hk96uIMfm14c9y6wHeBq6SH8g6udvcA==",
+       "cpu": [
+         "arm64"
+       ],
+@@ -2441,9 +2441,9 @@
+       }
+     },
+     "node_modules/@next/swc-linux-arm64-musl": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-16.4.3.tgz",
+-      "integrity": "sha512-WwYbhWkhYBvBtib1K4W0kL8MW2snBD2A5b3SN4vPpqalZbZs5+bQ1yzAdepVoOqrFfEW3dmREy4Zs1MrWcrFbw==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-16.4.6.tgz",
++      "integrity": "sha512-7/qPhTxDp2ScluOJOhLuhWmlA17o1yZ0SIgpISBCpBxXgtnK4+KGywBpFkfLPiU1rnSM1faFGzYkH6i7JdTrqA==",
+       "cpu": [
+         "arm64"
+       ],
+@@ -2457,9 +2457,9 @@
+       }
+     },
+     "node_modules/@next/swc-linux-x64-gnu": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-16.4.3.tgz",
+-      "integrity": "sha512-QymWvfUwDEC5/lpJOsxX5VAbyoR2D13+2Jsjz4be7gT4LPqEgdpkeLIR/HFfCLgKzoMhpJbp6I/JnogyNZHcaA==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-16.4.6.tgz",
++      "integrity": "sha512-oOpbNa8XOW1qCGd9VvzC4fbkkRxEls7/WI6tz+YHC0xRA7KpV1U7DrAnCPjzVyOk/karzWEepCOcTIDmwK8FwQ==",
+       "cpu": [
+         "x64"
+       ],
+@@ -2473,9 +2473,9 @@
+       }
+     },
+     "node_modules/@next/swc-linux-x64-musl": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-16.4.3.tgz",
+-      "integrity": "sha512-Vmjd9D7DpA4Vv3cUlr82QWgJD/BQZmns801vtC5VWHg6jCIA4a5vMKpQnfrM2pyCrp2eV0ENdUg4PlN3bAc2Yw==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-16.4.6.tgz",
++      "integrity": "sha512-aM8CZ+OR2EwXaAYw7KGkW2GDmNDsLBIRe1MMRZCJPTdw/xhTD0IMUVO4sf3KqrzuRouGzwwLZn34+gFeVXiUQA==",
+       "cpu": [
+         "x64"
+       ],
+@@ -2489,9 +2489,9 @@
+       }
+     },
+     "node_modules/@next/swc-win32-arm64-msvc": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-16.4.3.tgz",
+-      "integrity": "sha512-lG1pPdPLk7gTyGb00n5JIMLdBJgjb+UEhSdZvFbhUMg0DyC6z4B7RnpSKF9VCd4imkLObVbXOFA0kFCpw7yFow==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-16.4.6.tgz",
++      "integrity": "sha512-U0p7/tEtqvHX2crhd841CDwKtp5CFkKXVjOhmfccR3Pvp64sj8KBwRqsvltqLOwVBbj0NtkxwXSDpEHYGbxeXQ==",
+       "cpu": [
+         "arm64"
+       ],
+@@ -2505,9 +2505,9 @@
+       }
+     },
+     "node_modules/@next/swc-win32-x64-msvc": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-16.4.3.tgz",
+-      "integrity": "sha512-NmQC9RkJdnPXRaMxtkCzobB3teVjqF33oSOnwDfi+XYGWWYpt+xlGK3mtktSKLbdjwaWbJu2OkkMiRFGUUncKg==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-16.4.6.tgz",
++      "integrity": "sha512-3ZG15/5WIdlTQsIEvc9sPTTSL5XFrlLklIKmfF4fwsDnoAhu6NcBDXsk3mbGxNyo6aVLEGex+fHCv2MahY7a9g==",
+       "cpu": [
+         "x64"
+       ],
+@@ -6564,13 +6564,13 @@
+       }
+     },
+     "node_modules/eslint-config-next": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/eslint-config-next/-/eslint-config-next-16.4.3.tgz",
+-      "integrity": "sha512-j9IqBma6abp800frdUURaizYMgXOK+jNGyq6CsYcM9AxpSJs5D/TgMNGeAmRUilZvA7g9V1Tr71gNg9/SVTuMQ==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/eslint-config-next/-/eslint-config-next-16.4.6.tgz",
++      "integrity": "sha512-IBGGrVf9E6pL0NGL0hmeicVGeSyv1VEzIWq6IecDqkw+YFByhEtDJS9u1r6s6a1VxK6rssh69KyNFQUgfaacqw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@next/eslint-plugin-next": "16.4.3",
++        "@next/eslint-plugin-next": "16.4.6",
+         "eslint-import-resolver-node": "^0.3.6",
+         "eslint-import-resolver-typescript": "^3.5.2",
+         "eslint-plugin-import": "^2.32.0",
+@@ -9143,12 +9143,12 @@
+       "license": "MIT"
+     },
+     "node_modules/next": {
+-      "version": "16.4.3",
+-      "resolved": "https://registry.npmjs.org/next/-/next-16.4.3.tgz",
+-      "integrity": "sha512-OqxKTGi9u80FydydsMNYNjnuje9Au+kvHlt2GZ//ftdpDHm1dxKqAaENoOOTX5wKzn+9vaKUNIfZeyZUuLhCnA==",
++      "version": "16.4.6",
++      "resolved": "https://registry.npmjs.org/next/-/next-16.4.6.tgz",
++      "integrity": "sha512-QZJiYhaZLJMo2KpkQGQIwvmd79WVsAWeYIU554a8d7zArS3si/IRy3lBNV/rtYhE70oLwdLYhPAXLPx8HwcwtA==",
+       "license": "MIT",
+       "dependencies": {
+-        "@next/env": "16.4.3",
++        "@next/env": "16.4.6",
+         "@swc/helpers": "0.5.23",
+         "baseline-browser-mapping": "^2.9.19",
+         "caniuse-lite": "^1.0.30001579",
+@@ -9162,14 +9162,14 @@
+         "node": ">=20.9.0"
+       },
+       "optionalDependencies": {
+-        "@next/swc-darwin-arm64": "16.4.3",
+-        "@next/swc-darwin-x64": "16.4.3",
+-        "@next/swc-linux-arm64-gnu": "16.4.3",
+-        "@next/swc-linux-arm64-musl": "16.4.3",
+-        "@next/swc-linux-x64-gnu": "16.4.3",
+-        "@next/swc-linux-x64-musl": "16.4.3",
+-        "@next/swc-win32-arm64-msvc": "16.4.3",
+-        "@next/swc-win32-x64-msvc": "16.4.3",
++        "@next/swc-darwin-arm64": "16.4.6",
++        "@next/swc-darwin-x64": "16.4.6",
++        "@next/swc-linux-arm64-gnu": "16.4.6",
++        "@next/swc-linux-arm64-musl": "16.4.6",
++        "@next/swc-linux-x64-gnu": "16.4.6",
++        "@next/swc-linux-x64-musl": "16.4.6",
++        "@next/swc-win32-arm64-msvc": "16.4.6",
++        "@next/swc-win32-x64-msvc": "16.4.6",
+         "sharp": "^0.35.5"
+       },
+       "peerDependencies": {
+diff --git a/web/package.json b/web/package.json
+index e90b4fd..58dddc3 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -25,7 +25,7 @@
+     "katex": "^0.16.47",
+     "lucide-react": "^1.65.0",
+     "motion": "^14.9.0",
+-    "next": "16.4.3",
++    "next": "16.4.6",
+     "next-themes": "^0.4.6",
+     "plotly.js-dist-min": "^3.1.0",
+     "react": "19.3.0",
+@@ -50,7 +50,7 @@
+     "@types/react-dom": "^19",
+     "@types/react-plotly.js": "^2.6.4",
+     "eslint": "^9",
+-    "eslint-config-next": "16.4.3",
++    "eslint-config-next": "16.4.6",
+     "jsdom": "^29.1.1",
+     "openapi-typescript": "^7.13.0",
+     "tailwindcss": "^4",
