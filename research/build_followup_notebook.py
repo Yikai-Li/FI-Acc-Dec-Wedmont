@@ -288,7 +288,7 @@ For a clean rerun, copy `data/raw` and `data/processed` into the corresponding f
 results. Raw daily vendor responses remain local. The frozen monthly return snapshot is included.
 `validation_manifest.json` records SHA-256 hashes of the report inputs.
 
-WRDS ingestion requires an account login and any Duo approval. Employer installation awaits the employer's
+WRDS ingestion is waiting for first-time Duo enrollment on the approved account. Employer installation awaits the employer's
 reply and GitHub username. The repository access and local execution steps remain pending that response.
 The reviewed email, Drive search and project files yielded the meeting invitation and follow-up email.
 A recording link and transcript have yet to be located.
