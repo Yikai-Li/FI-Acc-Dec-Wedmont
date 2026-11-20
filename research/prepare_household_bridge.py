@@ -154,6 +154,7 @@ def main():
                 "expense_primary","den_expense","den_noage","tolerance","any_risk","portfolio_participant"]
             profile=pooled_group_means(Survey(d,rw),variables,"profile",levels)
             profile.to_csv(OUT/"household_profile_estimates.csv",index=False)
+            pooled_group_means(survey,["combined_stress_reserve","combined_all_income_interruption","baseline_reserve"],"profile",levels).to_csv(OUT/"actual_household_cell_stress.csv",index=False)
             templates=profile.pivot(index="group",columns="variable",values="estimate").reset_index().rename(columns={"group":"profile_id"})
             counts=profile.groupby("group")[["n_households_implicate1","population_share"]].first().reset_index().rename(columns={"group":"profile_id"})
             templates=templates.merge(counts,on="profile_id",validate="one_to_one")

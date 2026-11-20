@@ -12,6 +12,8 @@ from nbclient import NotebookClient
 from nbconvert import HTMLExporter
 from traitlets.config import Config
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--notebook", type=Path)
 args = parser.parse_args()
