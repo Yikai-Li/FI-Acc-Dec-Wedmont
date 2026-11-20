@@ -22,9 +22,11 @@ def main():
     with zipfile.ZipFile(io.BytesIO(archive)) as source:
         for item in source.infolist():
             if not item.is_dir():payload['lifecycle/'+item.filename]=source.read(item)
-    for name in ['scf_analysis.py','capacity_validation.py','age_expense_analysis.py']:
+    for name in ['scf_analysis.py','capacity_validation.py','age_expense_analysis.py','italy_age_extension.py',
+                 'india_age_analysis.py','europe_age_inventory.py','research_stage2.py']:
         payload['household/scripts/'+name]=(PROJECT/'scripts'/name).read_bytes()
     payload['household/data/age_expense_extension/bls_health_transcription.json']=(PROJECT/'data/age_expense_extension/bls_health_transcription.json').read_bytes()
+    payload['household/data/age_expense_extension/india_extract_manifest.json']=(PROJECT/'data/age_expense_extension/india_extract_manifest.json').read_bytes()
     for name in ['fixed_income_executive_brief_2026-11-20.pdf','fixed_income_integrated_report_2026-11-20.pdf']:
         payload['output/pdf/'+name]=(PROJECT/'output/pdf'/name).read_bytes()
     payload['START_HERE.txt']=(OUT/'REPRODUCE.txt').read_bytes()

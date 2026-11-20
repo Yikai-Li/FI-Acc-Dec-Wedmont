@@ -32,6 +32,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from numba import njit
 from pydantic import Field
 
 from lifecycle.data import panel
@@ -177,6 +178,7 @@ def info_value(v: pd.Series, a: pd.Series, decision: pd.Timestamp) -> tuple[floa
 
 
 # ============================================================================== optimisation helpers
+@njit(cache=True)
 def proj_capped_simplex(v: NDArray[np.float64], cap: NDArray[np.float64]) -> NDArray[np.float64]:
     lo, hi = v.min() - 1.0, v.max()
     for _ in range(100):
@@ -189,6 +191,7 @@ def proj_capped_simplex(v: NDArray[np.float64], cap: NDArray[np.float64]) -> NDA
     return np.clip(v - 0.5 * (lo + hi), 0, cap)
 
 
+@njit(cache=True)
 def mv_opt(mu: NDArray[np.float64], cov: NDArray[np.float64], gamma: float, cap: float) -> NDArray[np.float64]:
     """argmax w'mu - gamma/2 w'Cov w, long-only, sum 1, each weight <= cap (projected gradient)."""
     n = len(mu)
@@ -205,6 +208,7 @@ def mv_opt(mu: NDArray[np.float64], cov: NDArray[np.float64], gamma: float, cap:
     return w
 
 
+@njit(cache=True)
 def erc(cov: NDArray[np.float64]) -> NDArray[np.float64]:
     n = cov.shape[0]
     w = np.ones(n) / n

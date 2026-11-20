@@ -95,7 +95,7 @@ display(age[age.outcome.isin(['any_risk','cash_ge3']) & age.specification.isin([
 """)
 md("""## 3. Does age predict outcomes in later surveys?
 
-We fit weighted logistic models in earlier waves and evaluate them in the next wave: 2016 to 2019; 2016+2019 to 2022; and 2016+2019+2022 to 2025. Each training wave receives equal total weight. All five imputation models are fitted separately. Models are intercept-only, age spline, income/wealth, and income/wealth plus age. The liquidity target uses accessible assets and the **same age-independent reconstructed expense definition across waves**, avoiding the 2025 spending-question change.
+We fit weighted logistic models in earlier waves and evaluate them in the next wave: 2016 to 2019; 2016+2019 to 2022; and 2016+2019+2022 to 2025. Each training wave receives equal total weight. All five imputation models are fitted separately. Models are intercept-only, age spline, income/wealth, and income/wealth plus age. The liquidity target uses accessible assets and the **same age-independent reconstructed expense definition across waves**, avoiding the 2025 spending-question change. Later-wave descriptive outcomes had already been inspected in earlier analyses; this is a retrospective chronological test, not an untouched prospective lockbox.
 
 **Result: age is predictive for both recorded outcomes in these held-out waves.** Adding age to income/wealth improves Brier loss in all six target/wave tests. Brier improvement means the financial model's mean squared probability error minus the age-augmented model's error; positive is better. We report log loss and AUC as additional diagnostics. Holm adjustment covers the six incremental-age tests. Survey intervals condition on fitted training models and exclude full training-sample uncertainty. These are cross-sectional transport tests, not forecasts of the same person's aging. Income/wealth predictors share ingredients with the liquidity target; this is predictive evaluation, not independent validation of a latent capacity construct.""")
 code("""incremental = transport[transport.model.eq('Financial vs financial + age')]
@@ -231,6 +231,15 @@ fig.tight_layout();save('07_corrected_market_evidence')
 frontier=pd.read_csv(WRDS/'matched_frontier_summary.csv')
 display(frontier[frontier.withdrawal_rate.eq(.05)])
 """)
+md("""### 8.1 Complete legacy-demo re-evaluation after the accounting correction
+
+We also reran the complete archived historical demonstration, including its three forward policies and broad cohort/window/ablation experiments, under engine 2.4. Nine numerical fields change, all in forward CE or unmet-outlay summaries. For the lifecycle-adaptive policy, annual CE changes from $80,249.76 to $80,247.69, mean cumulative unmet outlays from $36,831.84 to $36,842.15, and unmet-outlay CVaR95 from $501,433.51 to $501,574.27. Its no-shortfall probability remains 88.4%. Other numerical fields, including the realized replay and experiments, agree within rtol 1e-10 / atol 1e-9. The corrected output supersedes those nine archived forward numbers; no broader policy superiority follows.
+
+The repeated numerical projection/optimization helpers now use Numba compilation without changing their algorithm or iteration caps. Independent analytical projection, quadratic-optimization and equal-risk-contribution tests accompany the change. A warm six-asset helper microbenchmark is supplied separately; it is not a claim about total application speed.""")
+code("""replay_audit=json.loads((HERE/'engine24_historical_replay_audit.json').read_text())
+display(pd.DataFrame(replay_audit['differences']))
+display(pd.DataFrame(replay_audit['forward_summary']).T)
+""")
 md("""## 9. International evidence: results and what remains unidentified
 
 **Italy:** SHIW 2016/2022 provides independent microdata. Income/wealth-adjusted older-age willingness is lower in both waves. The adjusted liquidity-coverage advantage persists in 2016 but is inconclusive in 2022. Reference-person and expense definitions differ from SCF. Replication uncertainty follows [Faiella (2008), equation 11](https://www.bancaditalia.it/pubblicazioni/temi-discussione/2008/2008-0662/en_tema_662.pdf).
@@ -251,7 +260,7 @@ display(india[india['sample'].eq('Random interviews') & india.outcome.eq('oldest
 """)
 md("""## 10. Verification, reproducibility and research conclusions
 
-An independent monthly accounting example uncovered a holdings-ledger bug: an explicit zero balance at a continuation boundary was treated as an absent starting state and could restore initial wealth. Engine semantic version **2.4** now distinguishes explicit zero holdings from unspecified holdings. Regression and independent accounting tests cover exhaustion, income recovery, asset losses, trade costs and monthly holdings. The prior matched frontier and signed-flow numerical results reproduce exactly under 2.4; their original dated reports retain the original version metadata.
+An independent monthly accounting example uncovered a holdings-ledger bug: an explicit zero balance at a continuation boundary was treated as an absent starting state and could restore initial wealth. Engine semantic version **2.4** now distinguishes explicit zero holdings from unspecified holdings. Regression and independent accounting tests cover exhaustion, income recovery, asset losses, trade costs and monthly holdings. The prior matched frontier and signed-flow numerical results reproduce exactly under 2.4; their original dated reports retain the original version metadata. The full historical demonstration is also re-evaluated, with its nine corrected forward summaries documented in Section 8.1 and `ENGINE24_IMPACT_AUDIT.txt`.
 
 The software handoff also upgrades vulnerable frontend dependencies, removes an unnecessary CLI dependency, retains its stylesheet with the MIT license, and replaces the form subscription with React Hook Form useWatch. The final verification file records the clean-install backend/unit/browser results, production build, audit and report execution. A local ZIP provides source, executed notebooks, aggregate numerical evidence, citation crosswalks and reproduction instructions. No licensed CRSP/TRACE rows or credentials are included.
 

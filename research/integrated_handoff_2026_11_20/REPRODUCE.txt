@@ -10,7 +10,7 @@ Read without executing
 
 Package layout
 lifecycle/ contains the complete versioned repository, public snapshots, aggregate evidence and source.
-household/scripts/ contains the three original SCF/SHED helper modules used by the new analyses.
+household/scripts/ contains the seven SCF/SHED and international analysis modules used by the new analyses.
 household/data/age_expense_extension/ contains the published-method medical-imputation transcription.
 output/pdf/ contains the final employer documents.
 Public raw household archives and licensed vendor observations are excluded. Official public download
@@ -48,7 +48,7 @@ Recompute public household evidence
 The public downloader refuses a hash mismatch rather than silently mixing revised vintages. In that
 case acquire the archived vintage or explicitly revise and revalidate the input manifest. SCF helper
 files retain original raw variable names and the BLS transcription; source data are not translated.
-The locked report environment includes the analysis dependencies and pytest for the six household checks.
+The locked report environment includes analysis dependencies, openpyxl and pytest.
 
 Recompute public market scenarios
   Set-Location lifecycle
@@ -70,9 +70,9 @@ configured origin and existing public aggregate study fixtures. Backend tests se
 independent installation. Never rebuild underneath an old running production server.
 
 Recorded checks
-verification.json records 121 independent backend/accounting checks, six household/rank-statistic
+verification.json records 124 independent backend/accounting checks, six household/rank-statistic
 checks, 230 frontend unit tests, 26 browser tests, production build and zero npm audit advisories at
-the recorded date. clean_reproduction_comparison.json records agreement of 13 key CSV artifacts in
+the recorded date. clean_reproduction_comparison.json records agreement of 16 key CSV artifacts in
 fresh environments, with rtol 1e-10 and atol 1e-9. Reproduction used verified frozen public archives,
 not a claim that every raw file was redownloaded from the publisher on November 20.
 Exact matched frontier and signed-flow reproduction logs audit the engine-2.4 correction. PDF pages
@@ -91,3 +91,23 @@ Employer response, their installation environment and any actual deployment rema
 Comparable foreign capacity estimates require additional research-access microdata and resolved
 measurement documentation. No recording/transcript was located in the sources previously searched.
 No external message or deployment was performed as part of this handoff.
+
+Recompute Italian, Indian and European evidence
+  .report-env/Scripts/python.exe lifecycle/research/fetch_scf_bridge_inputs.py --target household --include-international
+  $env:FIXED_INCOME_SURVEY_ROOT=(Resolve-Path household).Path
+  .report-env/Scripts/python.exe lifecycle/research/reproduce_international_bridge.py
+This obtains two Italian archives, two HFCS table archives and the SEBI source archive using the
+supplied frozen manifest. SEBI workbook extraction can use substantial disk/RAM/time. The recorded
+independent check reused its verified analytic extract rather than parsing the workbook again; the
+public raw archive and analytic-extract hashes are supplied. No raw respondent rows are delivered.
+The three country output files reproduce the prior estimates within the recorded tolerance.
+
+Complete legacy-demo accounting audit
+From lifecycle/: backend/.venv/Scripts/python.exe research/audit_historical_replay_engine24.py
+This reruns the original complete archived demonstration and its experiments under 2.4 and records
+the comparison. It bounds BLAS threads to 1 and Numba to 4 at process startup. Nine forward CE/unmet
+summaries change after fixing zero-balance continuation. The realized replay, experiment results
+and remaining numerical fields agree within rtol 1e-10 / atol 1e-9. Read ENGINE24_IMPACT_AUDIT.txt.
+The projection/optimization helpers now compile without changing their algorithms. Independent
+analytical/SLSQP tests pass. research/benchmark_replay_helpers.py records a warm helper benchmark,
+which must not be described as a whole-application performance improvement of the same magnitude.

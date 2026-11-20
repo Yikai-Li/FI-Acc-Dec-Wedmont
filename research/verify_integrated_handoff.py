@@ -43,7 +43,7 @@ def main():
     assert audit['metadata']['vulnerabilities']['total']==0
     shutil.copy2(ROOT/'research/npm_audit_fixed_2026_11_20.json',OUT/'npm_audit_final.json')
     reproduction=json.loads((OUT/'clean_reproduction_comparison.json').read_text())
-    assert len(reproduction)==13
+    assert len(reproduction)==16
     inventory=pd.read_csv(OUT/'evidence_prior/country_evidence_inventory.csv')
     assert len(inventory)==13 and inventory.country.nunique()==13
     for dataset in ['public','wrds']:
@@ -66,6 +66,9 @@ def main():
         assert 'DIFFERENT' not in content and 'reproduced ' in content
         exact[name]=content.splitlines()[-1]
     assert 'frontier' in exact and 'signed_flow' in exact
+    replay=json.loads((OUT/'engine24_historical_replay_audit.json').read_text())
+    assert replay['changed_count']==9
+    assert all(d['path'].startswith('/forward/') for d in replay['differences'])
     pages={}
     for name,expected in [('fixed_income_executive_brief_2026-11-20.pdf',1),('fixed_income_integrated_report_2026-11-20.pdf',11)]:
         reader=PdfReader(PROJECT/'output/pdf'/name)
@@ -77,8 +80,9 @@ def main():
         frontend_unit_tests={'passed':230,'failed':0},browser_tests=browser,
         independent_install='Fresh local clone, uv frozen backend plus dev extra, npm ci, isolated report environment; no copied environments or node_modules',
         clean_public_data='Restored committed public snapshot and rebuilt panel independently',
-        clean_household_data='Replayed 12 hash-verified SCF and 4 SHED public archives in an independent helper tree; live re-download was not required',
+        clean_household_data='Replayed 12 hash-verified SCF and 4 SHED archives, two Italian archives, two HFCS archives and the verified Indian analytic extract in an independent helper tree; live re-download was not required',
         clean_numeric_artifacts=reproduction,exact_prior_study_reproduction=exact,
+        complete_legacy_demo_re_evaluation={'status':'Completed including forward simulation and all experiments','changed_fields':9,'scope':'Only forward CE and unmet-outlay summaries change; remaining numerical fields agree within recorded tolerance','audit':'engine24_historical_replay_audit.json'},
         production_build='Passed in independently installed frontend',lint='Passed without lint warnings',typecheck='Passed',
         npm_audit='0 known advisories at the November 20 registry check; not a guarantee against future advisories',
         executed_notebook={'code_cells':len(code),'error_outputs':0,'standalone_figures':8,'language':'English'},
@@ -88,9 +92,11 @@ def main():
                   'One initial household test run could not write the optional pytest cache; six tests passed',
                   'Early browser attempts used a stale server / a test origin outside CORS; final fresh frontend on the configured origin passed all 26 tests'],
         scientific_boundaries=['Repeated cross-sections do not identify causal aging','Held-out survey intervals condition on fitted training models',
+            'Retrospective chronological tests are not an untouched prospective lockbox',
             'SHED validates a related hardship predictor, not the SCF stress formula','Mean-template nonlinear outcomes are not population outcomes',
             'Monte Carlo intervals exclude return-model and household-estimation uncertainty','Initial portfolio allocation is endowed; no initial implementation turnover charge',
-            'No stable general CE advantage or harmonized country capacity ranking is established'],
+            'No stable general CE advantage or harmonized country capacity ranking is established',
+            'Legacy historical-replay forward summaries are superseded by the completed 2.4 re-evaluation; see ENGINE24_IMPACT_AUDIT.txt'],
         external_dependencies=['Employer response and installation environment','Research-access international microdata and resolved response documentation',
                                'No recording/transcript located in the sources previously searched'],
         licensed_data='No raw CRSP/TRACE rows, credentials or private microdata included in the delivery package')

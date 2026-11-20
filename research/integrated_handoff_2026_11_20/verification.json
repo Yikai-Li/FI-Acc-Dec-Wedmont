@@ -2,7 +2,7 @@
   "date": "2026-11-20",
   "engine_semantic_version": "2.4",
   "backend_and_accounting_tests": {
-    "tests": 121,
+    "tests": 124,
     "failures": 0,
     "errors": 0,
     "skipped": 0
@@ -27,7 +27,7 @@
   },
   "independent_install": "Fresh local clone, uv frozen backend plus dev extra, npm ci, isolated report environment; no copied environments or node_modules",
   "clean_public_data": "Restored committed public snapshot and rebuilt panel independently",
-  "clean_household_data": "Replayed 12 hash-verified SCF and 4 SHED public archives in an independent helper tree; live re-download was not required",
+  "clean_household_data": "Replayed 12 hash-verified SCF and 4 SHED archives, two Italian archives, two HFCS archives and the verified Indian analytic extract in an independent helper tree; live re-download was not required",
   "clean_numeric_artifacts": [
     {
       "file": "budget_age_contrasts.csv",
@@ -106,18 +106,45 @@
       "rows": 21,
       "numerical_agreement": "rtol 1e-10 / atol 1e-9",
       "independent_environment": true
+    },
+    {
+      "file": "evidence_prior/italy_age_contrasts.csv",
+      "rows": 18,
+      "numerical_agreement": "rtol 1e-10 / atol 1e-9",
+      "independent_environment": true,
+      "input_note": "Verified frozen sources; India reused its hash-verified public analytic extract rather than re-parsing the large workbook"
+    },
+    {
+      "file": "evidence_prior/india_age_effects.csv",
+      "rows": 24,
+      "numerical_agreement": "rtol 1e-10 / atol 1e-9",
+      "independent_environment": true,
+      "input_note": "Verified frozen sources; India reused its hash-verified public analytic extract rather than re-parsing the large workbook"
+    },
+    {
+      "file": "evidence_prior/europe_published_age_profiles.csv",
+      "rows": 384,
+      "numerical_agreement": "rtol 1e-10 / atol 1e-9",
+      "independent_environment": true,
+      "input_note": "Verified frozen sources; India reused its hash-verified public analytic extract rather than re-parsing the large workbook"
     }
   ],
   "exact_prior_study_reproduction": {
     "frontier": "reproduced 5ed2a2bb125f27cca2cb",
     "signed_flow": "reproduced 57e534824da155afbd59"
   },
+  "complete_legacy_demo_re_evaluation": {
+    "status": "Completed including forward simulation and all experiments",
+    "changed_fields": 9,
+    "scope": "Only forward CE and unmet-outlay summaries change; remaining numerical fields agree within recorded tolerance",
+    "audit": "engine24_historical_replay_audit.json"
+  },
   "production_build": "Passed in independently installed frontend",
   "lint": "Passed without lint warnings",
   "typecheck": "Passed",
   "npm_audit": "0 known advisories at the November 20 registry check; not a guarantee against future advisories",
   "executed_notebook": {
-    "code_cells": 11,
+    "code_cells": 12,
     "error_outputs": 0,
     "standalone_figures": 8,
     "language": "English"
@@ -137,11 +164,13 @@
   "scientific_boundaries": [
     "Repeated cross-sections do not identify causal aging",
     "Held-out survey intervals condition on fitted training models",
+    "Retrospective chronological tests are not an untouched prospective lockbox",
     "SHED validates a related hardship predictor, not the SCF stress formula",
     "Mean-template nonlinear outcomes are not population outcomes",
     "Monte Carlo intervals exclude return-model and household-estimation uncertainty",
     "Initial portfolio allocation is endowed; no initial implementation turnover charge",
-    "No stable general CE advantage or harmonized country capacity ranking is established"
+    "No stable general CE advantage or harmonized country capacity ranking is established",
+    "Legacy historical-replay forward summaries are superseded by the completed 2.4 re-evaluation; see ENGINE24_IMPACT_AUDIT.txt"
   ],
   "external_dependencies": [
     "Employer response and installation environment",
