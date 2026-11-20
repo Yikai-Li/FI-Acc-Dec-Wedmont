@@ -10,6 +10,8 @@ data/processed/
 data/cache/
 data/runs/
 data/validation_etfs/
+data/wrds_validation/
+data/wrds_treasury_bridge/
 data/snapshot_restore_check/
 *.parquet
 !snapshots/public/*.parquet

@@ -1,5 +1,6 @@
 """Execute and render the report with this Python interpreter and isolated Jupyter configuration."""
 import json
+import argparse
 import sys
 import tempfile
 from pathlib import Path
@@ -11,8 +12,12 @@ from nbclient import NotebookClient
 from nbconvert import HTMLExporter
 from traitlets.config import Config
 
-folder = Path(__file__).resolve().parent / "followup_2026_11_19"
-path = folder / "fixed_income_validation.ipynb"
+parser = argparse.ArgumentParser()
+parser.add_argument("--notebook", type=Path)
+args = parser.parse_args()
+path = args.notebook or Path(__file__).resolve().parent / "followup_2026_11_19/fixed_income_validation.ipynb"
+path = path.resolve()
+folder = path.parent
 notebook = nbformat.read(path, as_version=4)
 with tempfile.TemporaryDirectory(prefix="lifecycle-report-kernel-") as temp:
     kernel = Path(temp) / "followup"

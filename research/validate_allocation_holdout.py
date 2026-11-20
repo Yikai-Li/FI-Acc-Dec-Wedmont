@@ -12,15 +12,15 @@ from numba import set_num_threads
 OUT = Path(__file__).resolve().parent / "followup_2026_11_19"
 
 
-def run(observed=False):
+def run(observed=False, end_date="2026-09-30", dataset_name=None):
     set_num_threads(4)
     if observed:
         os.environ["LIFECYCLE_DATA_DIR"] = "data/validation_etfs"
         panel.reload()
-    name = "observed" if observed else "main"
+    name = dataset_name or ("observed" if observed else "main")
     data = S.StudyData(universe="observed_treasury_etf" if observed else "core_long_history",
                        calibration_start="2002-09-01" if observed else "1953-01-01",
-                       calibration_end="2026-09-30")
+                       calibration_end=end_date)
     bond = "ust_7_10_etf" if observed else "ust_10y"
     scen = S.StudyScenario(n_paths=10000, n_train_paths=5000, seed=20261119, k_regimes=1)
     inv = S.StudyInvestor(horizon_years=30)

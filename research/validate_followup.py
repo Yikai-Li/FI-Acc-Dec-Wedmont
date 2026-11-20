@@ -106,7 +106,7 @@ def frontiers(dataset):
     save(dataset + "_frontier_runs.json", results)
 
 
-def holdout(dataset):
+def holdout(dataset, end_date="2026-09-30", start_date=None):
     """Freeze allocations on pre-split bootstrap paths, score completed post-split historical cohorts."""
     from lifecycle.data import panel
     from lifecycle.runs import context as C
@@ -117,7 +117,7 @@ def holdout(dataset):
     ages = (35, 55, 65, 85)
     qs = (-0.05, -0.02, 0, 0.02, 0.04, 0.06)
     bs = np.round(np.arange(0, 1.001, 0.1), 2)
-    data_start = "2002-09-01" if dataset == "observed" else "1953-01-01"
+    data_start = start_date or ("2002-09-01" if dataset == "observed" else "1953-01-01")
     splits = (2008, 2012, 2015) if dataset == "observed" else (1990, 2000, 2005, 2010, 2015)
     rows, fitted = [], []
     for horizon in (10, 20):
@@ -125,7 +125,7 @@ def holdout(dataset):
             train_data = S.StudyData(universe=universe, calibration_start=data_start,
                                      calibration_end=f"{split - 1}-12-31")
             test_data = S.StudyData(universe=universe, calibration_start=f"{split}-01-01",
-                                    calibration_end="2026-09-30")
+                                    calibration_end=end_date)
             available = len(panel.universe_data(universe, test_data.calibration_start, test_data.calibration_end).real)
             if available < horizon * 12:
                 continue

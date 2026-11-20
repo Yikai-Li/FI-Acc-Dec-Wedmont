@@ -288,7 +288,14 @@ For a clean rerun, copy `data/raw` and `data/processed` into the corresponding f
 results. Raw daily vendor responses remain local. The frozen monthly return snapshot is included.
 `validation_manifest.json` records SHA-256 hashes of the report inputs.
 
-WRDS ingestion is waiting for first-time Duo enrollment on the approved account. Employer installation awaits the employer's
+WRDS authentication and extraction have now been completed. The separate
+[WRDS validation extension](../wrds_validation_2026_11_19/wrds_validation.html) reports 12 matched-window
+frontiers, independent allocation tests, eight chronological folds per panel, and the full multi-asset
+universe. It uses CRSP Treasury, equity, cash and inflation inputs and licensed ETF data. Raw licensed
+observations are excluded from the report and package. These results supersede the earlier pending-WRDS
+status, while the public-data results above remain their documented baseline.
+
+Employer installation awaits the employer's
 reply and GitHub username. The repository access and local execution steps remain pending that response.
 The reviewed email, Drive search and project files yielded the meeting invitation and follow-up email.
 A recording link and transcript have yet to be located.
