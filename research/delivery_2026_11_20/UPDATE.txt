@@ -1,0 +1,1 @@
+Completed cross-wave SCF and WRDS validation, income-shock capacity analysis, international replication, portfolio-accounting fixes, and independent reproducibility checks. Finalized the English notebook, report, and tested Windows installer.
