@@ -1,5 +1,7 @@
 # LIFECYCLE
 
+[Download the complete employer handoff, PDFs and reproduction package](research/delivery_2026_11_20/README.md).
+
 The latest validated research handoff is dated **November 20, 2026**:
 [executed integrated notebook](research/integrated_handoff_2026_11_20/integrated_research.html),
 [executive findings](research/integrated_handoff_2026_11_20/EXECUTIVE_SUMMARY.txt), and
