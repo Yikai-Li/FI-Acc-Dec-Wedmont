@@ -1,1 +1,1 @@
-Completed cross-wave SCF and WRDS validation, income-shock capacity analysis, international replication, portfolio-accounting fixes, and independent reproducibility checks. Finalized the English notebook, report, and tested Windows installer.
+Implemented cross-wave SCF prediction and household income-shock tests, reproduced international results, standardized public/WRDS comparisons, corrected portfolio-accounting errors, and accelerated optimization. Independently reproduced 16 numerical outputs.

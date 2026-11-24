@@ -1,5 +1,7 @@
 # LIFECYCLE
 
+[Substantive research and technical progress](PROJECT_PROGRESS.md). Installation and GitHub publication are excluded from project contribution counts.
+
 [Download the complete employer handoff, PDFs and reproduction package](research/delivery_2026_11_20/README.md).
 
 The latest validated research handoff is dated **November 20, 2026**:

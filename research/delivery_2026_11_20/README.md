@@ -2,6 +2,8 @@
 
 Research completed November 20, 2026; GitHub delivery prepared November 22, 2026.
 
+For substantive research and technical progress, see [PROJECT_PROGRESS.md](../../PROJECT_PROGRESS.md). Windows installation and GitHub publication are operational records and are excluded from project contribution counts.
+
 - [One-page executive brief](fixed_income_executive_brief_2026-11-20.pdf)
 - [Formal research report](fixed_income_integrated_report_2026-11-20.pdf)
 - [Executed notebook](../integrated_handoff_2026_11_20/integrated_research.ipynb)
